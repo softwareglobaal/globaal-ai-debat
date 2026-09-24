@@ -107,7 +107,7 @@ def roep_uitvoerder(systeem, prompt, model, timeout, werkmap, bash, registreer=N
            "--system-prompt", systeem, "--model", model]
     code, uit, fout = debat._draai(cmd, prompt, timeout, registreer, werkmap)
     if code != 0:
-        raise RuntimeError(f"claude gaf exitcode {code}: {fout.strip()[:500]}")
+        raise RuntimeError(f"claude gaf exitcode {code}: {(fout.strip() or uit.strip())[:500]}")
     return uit.strip()
 
 
@@ -121,7 +121,7 @@ def roep_reviewer(systeem, prompt, model, timeout, werkmap, registreer=None):
     cmd += ["-"]
     code, uit, fout = debat._draai(cmd, volledig, timeout, registreer, werkmap)
     if code != 0:
-        raise RuntimeError(f"codex gaf exitcode {code}: {fout.strip()[:500]}")
+        raise RuntimeError(f"codex gaf exitcode {code}: {(fout.strip() or uit.strip())[:500]}")
     return debat.schoon_codex(uit)
 
 

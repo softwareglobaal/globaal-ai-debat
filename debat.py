@@ -158,7 +158,7 @@ def roep_claude(systeem: str, prompt: str, model: str, timeout: int, registreer=
     cmd = [vind(CLAUDE_CMD[0])] + CLAUDE_CMD[1:] + ["--system-prompt", systeem, "--model", model]
     code, uit, fout = _draai(cmd, prompt, timeout, registreer)
     if code != 0:
-        raise RuntimeError(f"claude gaf exitcode {code}: {fout.strip()[:500]}")
+        raise RuntimeError(f"claude gaf exitcode {code}: {(fout.strip() or uit.strip())[:500]}")
     return uit.strip()
 
 
@@ -173,7 +173,7 @@ def roep_codex(systeem: str, prompt: str, model: str, timeout: int, registreer=N
         cmd += ["-"]  # prompt via stdin
         code, uit, fout = _draai(cmd, volledig, timeout, registreer)
         if code != 0:
-            raise RuntimeError(f"codex gaf exitcode {code}: {fout.strip()[:500]}")
+            raise RuntimeError(f"codex gaf exitcode {code}: {(fout.strip() or uit.strip())[:500]}")
         if laatste.exists():
             tekst = laatste.read_text(encoding="utf-8", errors="replace").strip()
             if tekst:
