@@ -1,0 +1,16 @@
+# Uitvoer per machine: gesprekken, diffs en worktrees horen niet in git.
+runs/
+werkplek/
+
+# Per machine gecontroleerd door controleer_modellen.py.
+modellen.json
+
+# Eigen onderwerpen blijven lokaal; alleen de voorbeelden gaan mee.
+onderwerpen/*
+!onderwerpen/voorbeeld-*.json
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env

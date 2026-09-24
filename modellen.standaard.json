@@ -1,0 +1,12 @@
+{
+  "gecontroleerd_op": null,
+  "claude": [
+    {"waarde": "sonnet", "label": "sonnet"},
+    {"waarde": "opus", "label": "opus"},
+    {"waarde": "haiku", "label": "haiku"}
+  ],
+  "codex": [
+    {"waarde": "", "label": "standaardmodel van codex"}
+  ],
+  "geweigerd": {"claude": [], "codex": []}
+}

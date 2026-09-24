@@ -1,0 +1,12 @@
+{
+  "vraag": "Moet een intern applicatieplatform doorgaan met een aparte app per domein, of consolideren naar een paar grotere applicaties?",
+  "context": "Een bedrijf van ongeveer honderd medewerkers draait een zelfgebouwd intern platform op een enkele virtuele machine met 2 vCPU en 77 GB schijf. Er draaien inmiddels tientallen containers. Elke nieuwe functie wordt een eigen applicatie achter centrale single sign-on: boekhouding, HR, verkoop, uitgaven, intercompany, kostenrapportage, een documentpijplijn, verschillende dashboards en een aantal agents. Er is een gedeelde database met genummerde migraties, en de apps lezen deels elkaars tabellen.\n\nBekende storingen uit het afgelopen jaar: het CPU-krediet van de VM raakte een keer volledig op waardoor alles onbereikbaar werd, een automatische kernel-upgrade legde de machine zeven minuten plat, de build-cache liep de schijf vol, en een deploy liep stil vast waardoor een app zevenentwintig uur lang een oude versie serveerde terwijl de container gezond leek.\n\nDe ontwikkelcapaciteit is klein: in de praktijk een halve tot een hele ontwikkelaar, ondersteund door AI-assistenten.",
+  "claude": {
+    "naam": "CLAUDE (voor consolidatie)",
+    "positie": "Jij verdedigt consolidatie. Het aantal losse applicaties is de hoofdoorzaak van de storingen en van de onderhoudslast. Met deze ontwikkelcapaciteit is een handvol grotere applicaties met duidelijke domeingrenzen beter beheersbaar dan tientallen kleine. Beargumenteer wat er concreet samengevoegd moet worden, in welke volgorde, en wat de migratiekosten zijn. Erken waar consolidatie pijn doet, maar laat zien waarom die pijn eenmalig is."
+  },
+  "codex": {
+    "naam": "CHATGPT (voor app-per-domein)",
+    "positie": "Jij verdedigt doorgaan met een aparte app per domein. De storingen komen niet uit het aantal apps maar uit de onderbemeten infrastructuur en het ontbreken van deploy-verificatie en monitoring. Kleine losstaande apps zijn juist wat een halve ontwikkelaar aankan: een kapotte app sleept de rest niet mee, en elke app is los te herschrijven. Beargumenteer welke infrastructuurmaatregelen de echte oplossing zijn en wat consolidatie zou kosten aan verloren isolatie."
+  }
+}

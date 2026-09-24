@@ -1,0 +1,823 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-debat</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --grond: #f6f6f4;
+  --vlak: #ffffff;
+  --rand: #e2e0db;
+  --tekst: #1d1c1a;
+  --zacht: #6c6a65;
+  --claude: #c2643a;
+  --claude-vlak: #fbf1ea;
+  --claude-rand: #edd5c4;
+  --gpt: #1f7a6b;
+  --gpt-vlak: #eaf5f2;
+  --gpt-rand: #c3e0d8;
+  --mens: #5a5fb8;
+  --mens-vlak: #eeeefb;
+  --schaduw: 0 1px 2px rgba(0,0,0,.05), 0 4px 12px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --grond: #15161a;
+    --vlak: #1d1f24;
+    --rand: #2e3138;
+    --tekst: #e7e6e3;
+    --zacht: #9a988f;
+    --claude: #e09468;
+    --claude-vlak: #2a2019;
+    --claude-rand: #4a382a;
+    --gpt: #5fc0ab;
+    --gpt-vlak: #16261f;
+    --gpt-rand: #27453b;
+    --mens: #9aa0f0;
+    --mens-vlak: #1e2030;
+    --schaduw: 0 1px 2px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.2);
+  }
+}
+* { box-sizing: border-box; }
+/* Klassen met display: flex winnen het anders van het hidden-attribuut. */
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--grond); color: var(--tekst);
+  font: 15px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+
+.omhulsel { display: grid; grid-template-columns: 320px 1fr; min-height: 100vh; }
+@media (max-width: 900px) { .omhulsel { grid-template-columns: 1fr; } }
+
+/* Zijbalk */
+.zij {
+  background: var(--vlak); border-right: 1px solid var(--rand);
+  padding: 20px; display: flex; flex-direction: column; gap: 20px;
+  max-height: 100vh; overflow-y: auto; position: sticky; top: 0;
+}
+@media (max-width: 900px) { .zij { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--rand); } }
+.merk { font-size: 19px; font-weight: 650; letter-spacing: -.01em; }
+.merk span { color: var(--zacht); font-weight: 400; font-size: 13px; display: block; margin-top: 2px; }
+.blok { display: flex; flex-direction: column; gap: 8px; }
+.kop { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--zacht); }
+label.veld { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--zacht); }
+select, input[type=number], input[type=text], textarea {
+  background: var(--grond); border: 1px solid var(--rand); border-radius: 8px;
+  padding: 8px 10px; width: 100%; color: var(--tekst);
+}
+textarea { resize: vertical; min-height: 70px; font-size: 14px; }
+select:focus, input:focus, textarea:focus { outline: 2px solid var(--mens); outline-offset: -1px; }
+.rij { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+button {
+  background: var(--tekst); color: var(--grond); border: 0; border-radius: 8px;
+  padding: 10px 14px; font-weight: 600; cursor: pointer;
+}
+button:hover { opacity: .88; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.stil { background: transparent; color: var(--zacht); border: 1px solid var(--rand); }
+button.klein { padding: 6px 10px; font-size: 13px; font-weight: 500; }
+
+.geschiedenis { display: flex; flex-direction: column; gap: 4px; }
+.geschiedenis button {
+  background: transparent; color: var(--tekst); border: 1px solid transparent;
+  text-align: left; padding: 8px 10px; font-weight: 400; font-size: 13px; line-height: 1.35;
+}
+.geschiedenis button:hover { background: var(--grond); border-color: var(--rand); }
+.geschiedenis .meta { color: var(--zacht); font-size: 11px; }
+
+/* Hoofdvlak */
+.hoofd { display: flex; flex-direction: column; min-height: 100vh; }
+.balk {
+  padding: 16px 28px; border-bottom: 1px solid var(--rand); background: var(--vlak);
+  display: flex; align-items: center; gap: 14px; position: sticky; top: 0; z-index: 5;
+}
+.balk h1 { font-size: 16px; margin: 0; font-weight: 600; flex: 1; line-height: 1.35; }
+.pil {
+  font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--rand); color: var(--zacht); white-space: nowrap;
+}
+.pil.loopt { color: var(--gpt); border-color: var(--gpt-rand); background: var(--gpt-vlak); }
+
+.stroom { flex: 1; padding: 28px; display: flex; flex-direction: column; gap: 18px; max-width: 1100px; width: 100%; }
+.leeg { color: var(--zacht); text-align: center; padding: 80px 20px; }
+
+.beurt { display: flex; flex-direction: column; gap: 6px; max-width: 74%; }
+.beurt.claude { align-self: flex-start; }
+.beurt.codex { align-self: flex-end; align-items: flex-end; }
+.beurt.mens { align-self: center; max-width: 82%; align-items: center; }
+.etiket { font-size: 12px; font-weight: 650; display: flex; gap: 8px; align-items: baseline; }
+.etiket .grijs { color: var(--zacht); font-weight: 400; }
+.beurt.claude .etiket { color: var(--claude); }
+.beurt.codex .etiket { color: var(--gpt); }
+.beurt.mens .etiket { color: var(--mens); }
+.bel {
+  background: var(--vlak); border: 1px solid var(--rand); border-radius: 14px;
+  padding: 14px 18px; box-shadow: var(--schaduw); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.beurt.claude .bel { background: var(--claude-vlak); border-color: var(--claude-rand); border-bottom-left-radius: 4px; }
+.beurt.codex .bel { background: var(--gpt-vlak); border-color: var(--gpt-rand); border-bottom-right-radius: 4px; }
+.beurt.mens .bel { background: var(--mens-vlak); border-style: dashed; border-color: var(--mens); text-align: center; }
+
+/* Opdrachtmodus: brede blokken met een diff eronder. */
+.beurt.breed { max-width: 92%; align-self: stretch; align-items: stretch; }
+.bestanden { font-size: 12px; color: var(--zacht); margin-top: 10px; }
+.bestanden b { color: var(--tekst); font-weight: 600; }
+details.diff { margin-top: 10px; }
+details.diff summary { cursor: pointer; font-size: 12px; color: var(--zacht); }
+pre.diff {
+  margin: 8px 0 0; padding: 12px; border-radius: 8px; overflow-x: auto;
+  background: var(--grond); border: 1px solid var(--rand);
+  font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre;
+}
+pre.diff .plus { color: var(--gpt); }
+pre.diff .min { color: var(--claude); }
+pre.diff .kop { color: var(--mens); font-weight: 600; }
+
+.bezig { display: flex; gap: 8px; align-items: center; color: var(--zacht); font-size: 13px; padding: 4px 2px; }
+.punt { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: knipper 1.2s infinite; }
+.punt:nth-child(2) { animation-delay: .2s; }
+.punt:nth-child(3) { animation-delay: .4s; }
+@keyframes knipper { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+
+.fout { background: #fdecea; border: 1px solid #f2b8b2; color: #8c2f24; padding: 12px 16px; border-radius: 10px; }
+@media (prefers-color-scheme: dark) { .fout { background: #2d1917; border-color: #5c2c26; color: #f0a89f; } }
+
+/* Injectiebalk */
+.injectie {
+  position: sticky; bottom: 0; background: var(--vlak); border-top: 1px solid var(--rand);
+  padding: 14px 28px; display: flex; gap: 12px; align-items: flex-end;
+}
+.injectie textarea { min-height: 46px; max-height: 160px; }
+.injectie .hint { font-size: 12px; color: var(--zacht); margin-bottom: 4px; }
+
+dialog {
+  border: 1px solid var(--rand); border-radius: 14px; background: var(--vlak); color: var(--tekst);
+  padding: 0; width: min(720px, 92vw); box-shadow: 0 20px 60px rgba(0,0,0,.25);
+}
+dialog::backdrop { background: rgba(0,0,0,.45); }
+.dia-kop { padding: 18px 24px; border-bottom: 1px solid var(--rand); font-weight: 650; }
+.dia-lijf { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; max-height: 70vh; overflow-y: auto; }
+.dia-voet { padding: 14px 24px; border-top: 1px solid var(--rand); display: flex; gap: 10px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+<div class="omhulsel">
+
+  <aside class="zij">
+    <div class="merk">AI-debat<span>Claude tegen ChatGPT, op je abonnementen</span></div>
+
+    <div class="blok">
+      <div class="kop">Modus</div>
+      <div class="rij">
+        <button class="klein" id="modus-debat">Debat</button>
+        <button class="stil klein" id="modus-opdracht">Opdracht</button>
+      </div>
+      <div style="font-size:12px;color:var(--zacht)" id="modus-uitleg">
+        Twee modellen verdedigen een tegengestelde positie.
+      </div>
+    </div>
+
+    <div class="blok" id="blok-opdracht" hidden>
+      <div class="kop">Repo en opdracht</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="repo-pad" style="flex:1;font-size:12px;color:var(--zacht);overflow-wrap:anywhere">Geen repo gekozen</span>
+        <button class="stil klein" id="knop-repo">Kiezen</button>
+      </div>
+      <textarea id="opdracht-tekst" rows="6" placeholder="Beschrijf wat er moet gebeuren. Wees concreet: welk bestand, welk gedrag, hoe je weet dat het klopt."></textarea>
+    </div>
+
+    <div class="blok" id="blok-onderwerp">
+      <div class="kop">Onderwerp</div>
+      <select id="onderwerp"></select>
+      <div id="onderwerp-info" style="font-size:12px;color:var(--zacht)"></div>
+      <div class="rij">
+        <button class="stil klein" id="knop-bewerk">Bewerken</button>
+        <button class="stil klein" id="knop-nieuw">Nieuw</button>
+      </div>
+    </div>
+
+    <div class="blok">
+      <div class="kop">Instellingen</div>
+      <div class="rij">
+        <label class="veld" id="label-beurten">Beurten<input type="number" id="beurten" value="10" min="2" max="60"></label>
+        <label class="veld" id="label-rondes" hidden>Rondes<input type="number" id="rondes" value="2" min="1" max="6"></label>
+        <label class="veld">Woorden<input type="number" id="woorden" value="250" min="50" max="800" step="25"></label>
+      </div>
+      <label class="veld" id="label-bash" hidden style="flex-direction:row;align-items:flex-start;gap:8px">
+        <input type="checkbox" id="bash" style="width:auto;margin-top:4px">
+        <span>De uitvoerder mag commando's draaien. Nodig om tests te draaien, maar dan kan er ook een commando lopen dat uit de tekst van de reviewer komt.</span>
+      </label>
+      <label class="veld">Claude-model
+        <select id="claude-model"></select>
+      </label>
+      <label class="veld">ChatGPT-model
+        <select id="codex-model"></select>
+      </label>
+      <div id="modellen-info" style="font-size:12px;color:var(--zacht)"></div>
+      <label class="veld">Wie opent
+        <select id="start">
+          <option value="claude">Claude</option>
+          <option value="codex">ChatGPT</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="blok">
+      <button id="knop-start">Debat starten</button>
+      <button class="stil" id="knop-stop" disabled>Nu stoppen</button>
+      <div class="hint" style="font-size:12px;color:var(--zacht)">Breekt de lopende beurt direct af. Die beurt gaat verloren.</div>
+    </div>
+
+    <div class="blok">
+      <div class="kop">Eerdere runs</div>
+      <div class="geschiedenis" id="geschiedenis"></div>
+    </div>
+  </aside>
+
+  <main class="hoofd">
+    <div class="balk">
+      <h1 id="titel">Kies een onderwerp en start het debat</h1>
+      <span class="pil" id="werkmap-pil" hidden></span>
+      <span class="pil" id="status">niet actief</span>
+    </div>
+
+    <div class="stroom" id="stroom">
+      <div class="leeg" id="leeg">Nog geen beurten. Start links een debat, of open een eerdere run.</div>
+    </div>
+
+    <div class="injectie">
+      <div style="flex:1">
+        <div class="hint">Als moderator meepraten. Je bericht komt na de lopende beurt in het debat en beide kanten lezen het mee.</div>
+        <textarea id="injectie-tekst" placeholder="Bijvoorbeeld: laat de kostenkant even rusten, ga in op de deploy-verificatie." disabled></textarea>
+      </div>
+      <button id="knop-injectie" disabled>Inbrengen</button>
+    </div>
+  </main>
+</div>
+
+<dialog id="dia">
+  <form method="dialog">
+    <div class="dia-kop" id="dia-titel">Onderwerp bewerken</div>
+    <div class="dia-lijf">
+      <label class="veld">Bestandsnaam (zonder .json)<input type="text" id="v-bestand"></label>
+      <label class="veld">De te beslissen vraag<input type="text" id="v-vraag"></label>
+      <label class="veld">Context die beide kanten krijgen
+        <textarea id="v-context" rows="7"></textarea>
+      </label>
+      <fieldset style="border:1px solid var(--rand);border-radius:10px;padding:14px 16px;margin:0">
+        <legend class="kop" style="padding:0 6px">Projectmap (optioneel)</legend>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <span id="v-projectmap" style="flex:1;font-size:13px;color:var(--zacht);overflow-wrap:anywhere">Geen map gekozen</span>
+          <button type="button" class="stil klein" id="knop-map">Map kiezen</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <button type="button" class="klein" id="knop-briefing" disabled>Briefing genereren</button>
+          <button type="button" class="stil klein" id="knop-briefing-stop" hidden>Afbreken</button>
+          <span id="briefing-stand" style="font-size:12px;color:var(--zacht)"></span>
+        </div>
+        <div id="briefing-waarschuwing" class="fout" hidden style="margin-bottom:10px;font-size:13px"></div>
+        <label class="veld">Briefing die beide kanten krijgen
+          <textarea id="v-briefing" rows="8" placeholder="Kies een map en genereer een briefing, of typ er zelf een."></textarea>
+        </label>
+        <details id="briefing-audit" hidden style="margin-top:10px">
+          <summary style="cursor:pointer;font-size:12px;color:var(--zacht)">Welke bestanden zijn gelezen en wat is overgeslagen</summary>
+          <div id="briefing-audit-inhoud" style="font-size:12px;color:var(--zacht);margin-top:8px;max-height:200px;overflow-y:auto"></div>
+        </details>
+      </fieldset>
+      <label class="veld">Naam kant Claude<input type="text" id="v-claude-naam"></label>
+      <label class="veld">Positie van Claude<textarea id="v-claude-positie" rows="4"></textarea></label>
+      <label class="veld">Naam kant ChatGPT<input type="text" id="v-codex-naam"></label>
+      <label class="veld">Positie van ChatGPT<textarea id="v-codex-positie" rows="4"></textarea></label>
+      <div class="hint" style="color:var(--zacht);font-size:12px">
+        Zet hier geen hostnamen, IP-adressen of persoonsgegevens in. Deze tekst gaat ook naar OpenAI.
+      </div>
+    </div>
+    <div class="dia-voet">
+      <button type="button" class="stil" id="knop-annuleer">Annuleren</button>
+      <button type="button" id="knop-bewaar">Bewaren</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dia-map">
+  <div class="dia-kop">Projectmap kiezen</div>
+  <div class="dia-lijf">
+    <div style="display:flex;gap:8px;align-items:center">
+      <button type="button" class="stil klein" id="map-omhoog">Omhoog</button>
+      <span id="map-pad" style="font-size:13px;overflow-wrap:anywhere"></span>
+    </div>
+    <div id="map-lijst" class="geschiedenis" style="max-height:320px;overflow-y:auto"></div>
+  </div>
+  <div class="dia-voet">
+    <button type="button" class="stil" id="map-annuleer">Annuleren</button>
+    <button type="button" id="map-kies">Deze map gebruiken</button>
+  </div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let onderwerpen = [], getoond = 0, pollTimer = null, historisch = false;
+
+async function haal(url, opties) {
+  const r = await fetch(url, opties);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).fout || r.statusText);
+  return r.json();
+}
+
+function huidigOnderwerp() {
+  return onderwerpen[$("onderwerp").selectedIndex] || null;
+}
+
+async function laadOnderwerpen(kies) {
+  onderwerpen = await haal("/api/onderwerpen");
+  const sel = $("onderwerp");
+  sel.innerHTML = "";
+  onderwerpen.forEach((o) => {
+    const opt = document.createElement("option");
+    opt.textContent = o.vraag.length > 60 ? o.vraag.slice(0, 60) + "..." : o.vraag;
+    opt.title = o.vraag;
+    sel.appendChild(opt);
+  });
+  if (kies) {
+    const i = onderwerpen.findIndex((o) => o.bestand === kies);
+    if (i >= 0) sel.selectedIndex = i;
+  }
+  toonOnderwerpInfo();
+}
+
+function toonOnderwerpInfo() {
+  const o = huidigOnderwerp();
+  const doel = $("onderwerp-info");
+  if (!o) { doel.textContent = ""; return; }
+  if (o.briefing) {
+    const woorden = o.briefing.split(/\s+/).length;
+    const map = o.projectmap ? o.projectmap.split(/[\\/]/).pop() : "handmatig";
+    doel.textContent = `Met projectbriefing (${map}, ${woorden} woorden)`;
+  } else {
+    doel.textContent = "Zonder projectcontext";
+  }
+}
+
+async function laadGeschiedenis() {
+  const runs = await haal("/api/runs");
+  const doel = $("geschiedenis");
+  doel.innerHTML = "";
+  if (!runs.length) { doel.innerHTML = '<div class="meta" style="color:var(--zacht);font-size:12px">Nog geen runs.</div>'; return; }
+  runs.forEach((r) => {
+    const b = document.createElement("button");
+    b.innerHTML = `${r.vraag.slice(0, 70)}<div class="meta">${r.naam} &middot; ${r.beurten} beurten</div>`;
+    b.onclick = () => openRun(r.naam);
+    doel.appendChild(b);
+  });
+}
+
+function kleurDiff(tekst) {
+  const doel = document.createElement("pre");
+  doel.className = "diff";
+  tekst.split("\n").forEach((regel) => {
+    const span = document.createElement("span");
+    if (regel.startsWith("+++") || regel.startsWith("---") || regel.startsWith("diff ") || regel.startsWith("@@")) span.className = "kop";
+    else if (regel.startsWith("+")) span.className = "plus";
+    else if (regel.startsWith("-")) span.className = "min";
+    span.textContent = regel + "\n";
+    doel.appendChild(span);
+  });
+  return doel;
+}
+
+function maakBeurt(b) {
+  const el = document.createElement("div");
+  const breed = b.soort ? " breed" : "";
+  el.className = "beurt " + (b.kant === "mens" ? "mens" : b.kant) + breed;
+  const model = b.kant === "mens" ? "" : ` <span class="grijs">${b.model} &middot; ${b.duur_s}s</span>`;
+  el.innerHTML = `<div class="etiket">${b.spreker}${model}</div><div class="bel"></div>`;
+  const bel = el.querySelector(".bel");
+  bel.textContent = b.tekst;
+
+  if (b.bestanden) {
+    const f = b.bestanden;
+    const regel = document.createElement("div");
+    regel.className = "bestanden";
+    const stuk = (naam, lijst) => (lijst.length ? `<b>${naam}:</b> ${lijst.join(", ")}` : "");
+    regel.innerHTML = [stuk("toegevoegd", f.toegevoegd), stuk("gewijzigd", f.gewijzigd),
+                       stuk("verwijderd", f.verwijderd)].filter(Boolean).join(" &nbsp; ")
+                       || "geen bestanden gewijzigd";
+    bel.appendChild(regel);
+  }
+  if (b.diff && b.diff.trim()) {
+    const d = document.createElement("details");
+    d.className = "diff";
+    const s = document.createElement("summary");
+    s.textContent = `Diff bekijken (${b.diff.split("\n").length} regels)`;
+    d.appendChild(s);
+    d.appendChild(kleurDiff(b.diff));
+    bel.appendChild(d);
+  }
+  return el;
+}
+
+function toonBeurten(lijst, wissen) {
+  const stroom = $("stroom");
+  if (wissen) { stroom.innerHTML = ""; getoond = 0; }
+  const leeg = $("leeg");
+  if (leeg && lijst.length) leeg.remove();
+  lijst.forEach((b) => stroom.appendChild(maakBeurt(b)));
+  getoond += lijst.length;
+}
+
+function toonBezig(naam) {
+  const oud = document.getElementById("bezig");
+  if (oud) oud.remove();
+  if (!naam) return;
+  const el = document.createElement("div");
+  el.id = "bezig";
+  el.className = "bezig";
+  el.innerHTML = `<span class="punt"></span><span class="punt"></span><span class="punt"></span> ${naam} is aan het schrijven`;
+  $("stroom").appendChild(el);
+}
+
+function naarBeneden() {
+  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+}
+
+async function poll() {
+  if (historisch) return;
+  let s;
+  try { s = await haal("/api/status?vanaf=" + getoond); } catch { return; }
+
+  if (s.onderwerp) $("titel").textContent = s.onderwerp.vraag;
+  $("status").textContent = s.actief
+    ? `beurt ${s.aantal + 1} van ${s.totaal}`
+    : (s.run ? `${s.stop_gevraagd ? "gestopt" : "klaar"}, ${s.aantal} beurten` : "niet actief");
+  $("status").className = "pil" + (s.actief ? " loopt" : "");
+
+  if (s.nieuwe.length) { toonBeurten(s.nieuwe, false); naarBeneden(); }
+  toonBezig(s.actief ? s.bezig_met : null);
+
+  const isOpdracht = s.modus === "opdracht";
+  $("werkmap-pil").hidden = !s.werkmap;
+  if (s.werkmap) {
+    $("werkmap-pil").textContent = `worktree ${s.tak}`;
+    $("werkmap-pil").title = s.werkmap;
+  }
+
+  $("knop-start").disabled = s.actief;
+  $("knop-stop").disabled = !s.actief;
+  $("injectie-tekst").disabled = !s.actief || isOpdracht;
+  $("knop-injectie").disabled = !s.actief || isOpdracht;
+  $("knop-injectie").textContent = s.wachtrij ? `Inbrengen (${s.wachtrij} wacht)` : "Inbrengen";
+
+  if (s.fout && !document.getElementById("foutmelding")) {
+    const el = document.createElement("div");
+    el.id = "foutmelding";
+    el.className = "fout";
+    el.textContent = "Fout: " + s.fout;
+    $("stroom").appendChild(el);
+  }
+  if (!s.actief && pollTimer) { clearInterval(pollTimer); pollTimer = null; laadGeschiedenis(); }
+}
+
+function startPollen() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(poll, 1200);
+  poll();
+}
+
+async function openRun(naam) {
+  const r = await haal("/api/run/" + naam);
+  historisch = true;
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  $("titel").textContent = r.onderwerp.vraag;
+  $("status").textContent = `${naam}, ${r.beurten.length} beurten`;
+  $("status").className = "pil";
+  toonBeurten(r.beurten, true);
+  toonBezig(null);
+  ["knop-stop", "injectie-tekst", "knop-injectie"].forEach((i) => ($(i).disabled = true));
+  $("knop-start").disabled = false;
+}
+
+async function startOpdracht() {
+  if (!repo) return alert("Kies eerst een repo.");
+  const tekst = $("opdracht-tekst").value.trim();
+  if (!tekst) return alert("Beschrijf eerst wat er moet gebeuren.");
+  historisch = false;
+  const foutmelding = document.getElementById("foutmelding");
+  if (foutmelding) foutmelding.remove();
+  toonBeurten([], true);
+  try {
+    await haal("/api/opdracht", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        onderwerp: { vraag: tekst.split("\n")[0].slice(0, 120), opdracht: tekst, repo },
+        rondes: +$("rondes").value,
+        max_woorden: +$("woorden").value,
+        claude_model: $("claude-model").value,
+        codex_model: $("codex-model").value.trim(),
+        bash: $("bash").checked,
+      }),
+    });
+    startPollen();
+  } catch (e) { alert("Starten mislukt: " + e.message); }
+}
+
+$("knop-start").onclick = async () => {
+  if (modus === "opdracht") return startOpdracht();
+  const o = huidigOnderwerp();
+  if (!o) return alert("Kies eerst een onderwerp.");
+  historisch = false;
+  const foutmelding = document.getElementById("foutmelding");
+  if (foutmelding) foutmelding.remove();
+  toonBeurten([], true);
+  try {
+    await haal("/api/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        onderwerp: o,
+        beurten: +$("beurten").value,
+        max_woorden: +$("woorden").value,
+        claude_model: $("claude-model").value,
+        codex_model: $("codex-model").value.trim(),
+        start: $("start").value,
+      }),
+    });
+    startPollen();
+  } catch (e) { alert("Starten mislukt: " + e.message); }
+};
+
+$("knop-stop").onclick = () => haal("/api/stop", { method: "POST" });
+$("onderwerp").onchange = toonOnderwerpInfo;
+
+async function stuurInjectie() {
+  const veld = $("injectie-tekst");
+  const tekst = veld.value.trim();
+  if (!tekst) return;
+  veld.value = "";
+  try { await haal("/api/injectie", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tekst }),
+  }); poll(); } catch (e) { alert(e.message); veld.value = tekst; }
+}
+$("knop-injectie").onclick = stuurInjectie;
+$("injectie-tekst").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); stuurInjectie(); }
+});
+
+let mapNu = null;        // waar de mapkiezer nu staat
+let projectmap = null;   // de gekozen projectmap van het onderwerp
+
+function toonProjectmap() {
+  $("v-projectmap").textContent = projectmap || "Geen map gekozen";
+  $("knop-briefing").disabled = !projectmap;
+}
+
+async function laadMappen(pad) {
+  const d = await haal("/api/mappen" + (pad ? "?pad=" + encodeURIComponent(pad) : ""));
+  mapNu = d.pad;
+  $("map-pad").textContent = d.pad + (d.is_repo ? "  (git-repo)" : "");
+  $("map-omhoog").disabled = !d.omhoog;
+  $("map-omhoog").onclick = () => laadMappen(d.omhoog);
+  const lijst = $("map-lijst");
+  lijst.innerHTML = "";
+  if (!d.mappen.length) {
+    lijst.innerHTML = '<div style="font-size:12px;color:var(--zacht)">Geen submappen.</div>';
+  }
+  d.mappen.forEach((m) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = m.naam + (m.is_repo ? "  (git-repo)" : "");
+    b.onclick = () => laadMappen(m.pad);
+    lijst.appendChild(b);
+  });
+}
+
+let mapDoel = "briefing";   // waar de gekozen map naartoe gaat
+let repo = null;            // de repo voor de opdrachtmodus
+
+$("knop-map").onclick = async () => {
+  mapDoel = "briefing";
+  await laadMappen(projectmap || null);
+  $("dia-map").showModal();
+};
+$("knop-repo").onclick = async () => {
+  mapDoel = "repo";
+  await laadMappen(repo || null);
+  $("dia-map").showModal();
+};
+$("map-annuleer").onclick = () => $("dia-map").close();
+$("map-kies").onclick = () => {
+  if (mapDoel === "repo") {
+    repo = mapNu;
+    $("repo-pad").textContent = repo;
+  } else {
+    projectmap = mapNu;
+    toonProjectmap();
+  }
+  $("dia-map").close();
+};
+
+let modus = "debat";
+
+function zetModus(nieuw) {
+  modus = nieuw;
+  const opdracht = modus === "opdracht";
+  $("modus-debat").className = opdracht ? "stil klein" : "klein";
+  $("modus-opdracht").className = opdracht ? "klein" : "stil klein";
+  $("blok-onderwerp").hidden = opdracht;
+  $("blok-opdracht").hidden = !opdracht;
+  $("label-beurten").hidden = opdracht;
+  $("label-rondes").hidden = !opdracht;
+  $("label-bash").hidden = !opdracht;
+  $("knop-start").textContent = opdracht ? "Opdracht starten" : "Debat starten";
+  $("modus-uitleg").textContent = opdracht
+    ? "Claude schrijft de code in een git-worktree, ChatGPT valt de diff aan, Claude herziet."
+    : "Twee modellen verdedigen een tegengestelde positie.";
+  $("woorden").value = opdracht ? 300 : 250;
+}
+$("modus-debat").onclick = () => zetModus("debat");
+$("modus-opdracht").onclick = () => zetModus("opdracht");
+
+function toonWaarschuwingen(lijst) {
+  const doel = $("briefing-waarschuwing");
+  if (!lijst.length) { doel.hidden = true; doel.textContent = ""; return; }
+  const per = {};
+  lijst.forEach((w) => (per[w.soort] = (per[w.soort] || []).concat(w.gemaskeerd)));
+  const regels = Object.entries(per).map(([soort, v]) => `${soort} (${v.length}x): ${v.join(", ")}`);
+  doel.innerHTML = "";
+  const kop = document.createElement("div");
+  kop.style.fontWeight = "600";
+  kop.textContent = "Deze briefing bevat gegevens die je waarschijnlijk niet naar OpenAI wilt sturen. Haal ze eruit voor je start.";
+  doel.appendChild(kop);
+  regels.forEach((t) => {
+    const el = document.createElement("div");
+    el.style.marginTop = "4px";
+    el.textContent = t;
+    doel.appendChild(el);
+  });
+  doel.hidden = false;
+}
+
+let briefingTimer = null;
+
+async function volgBriefing() {
+  const s = await haal("/api/briefing");
+  if (s.bezig) {
+    $("briefing-stand").textContent = "bezig, dit duurt ongeveer een minuut...";
+    return;
+  }
+  clearInterval(briefingTimer);
+  briefingTimer = null;
+  $("knop-briefing").disabled = !projectmap;
+  $("knop-briefing-stop").hidden = true;
+  if (s.fout) { $("briefing-stand").textContent = "mislukt: " + s.fout; return; }
+  if (!s.resultaat) { $("briefing-stand").textContent = "afgebroken"; return; }
+
+  const r = s.resultaat;
+  $("v-briefing").value = r.briefing;
+  projectmap = r.projectmap;
+  toonProjectmap();
+  toonWaarschuwingen(r.waarschuwingen || []);
+  $("briefing-stand").textContent =
+    `${r.meegenomen.length} bestanden gelezen van ${r.aantal_bestanden}, ${r.overgeslagen.length} overgeslagen`;
+  const audit = $("briefing-audit-inhoud");
+  audit.innerHTML = "";
+  const maakLijst = (titel, regels) => {
+    const kop = document.createElement("div");
+    kop.style.cssText = "font-weight:600;margin:6px 0 2px";
+    kop.textContent = titel;
+    audit.appendChild(kop);
+    regels.forEach((t) => {
+      const el = document.createElement("div");
+      el.textContent = t;
+      audit.appendChild(el);
+    });
+  };
+  maakLijst("Gelezen", r.meegenomen);
+  maakLijst("Overgeslagen", r.overgeslagen.map((o) => `${o.bestand} - ${o.reden}`));
+  $("briefing-audit").hidden = false;
+}
+
+$("knop-briefing").onclick = async () => {
+  if (!projectmap) return;
+  $("knop-briefing").disabled = true;
+  $("knop-briefing-stop").hidden = false;
+  $("briefing-stand").textContent = "starten...";
+  try {
+    await haal("/api/briefing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pad: projectmap, woorden: 500, model: $("claude-model").value }),
+    });
+    briefingTimer = setInterval(volgBriefing, 2000);
+  } catch (e) {
+    $("briefing-stand").textContent = "starten mislukt: " + e.message;
+    $("knop-briefing").disabled = false;
+    $("knop-briefing-stop").hidden = true;
+  }
+};
+
+$("knop-briefing-stop").onclick = () => haal("/api/briefing/stop", { method: "POST" });
+
+async function controleerBriefing() {
+  const tekst = $("v-briefing").value.trim();
+  if (!tekst) return toonWaarschuwingen([]);
+  try {
+    const r = await haal("/api/controleer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tekst }),
+    });
+    toonWaarschuwingen(r.waarschuwingen);
+  } catch { /* controle is een hulpmiddel, geen blokkade */ }
+}
+$("v-briefing").addEventListener("blur", controleerBriefing);
+
+function vulDialoog(o, bestand) {
+  $("v-bestand").value = bestand || "";
+  $("v-vraag").value = o ? o.vraag : "";
+  $("v-context").value = o ? o.context : "";
+  $("v-briefing").value = (o && o.briefing) || "";
+  projectmap = (o && o.projectmap) || null;
+  toonProjectmap();
+  $("briefing-stand").textContent = "";
+  $("briefing-audit").hidden = true;
+  toonWaarschuwingen([]);
+  if (o && o.briefing) controleerBriefing();
+  $("v-claude-naam").value = o ? o.claude.naam : "CLAUDE (voor ...)";
+  $("v-claude-positie").value = o ? o.claude.positie : "";
+  $("v-codex-naam").value = o ? o.codex.naam : "CHATGPT (voor ...)";
+  $("v-codex-positie").value = o ? o.codex.positie : "";
+}
+
+$("knop-bewerk").onclick = () => {
+  const o = huidigOnderwerp();
+  if (!o) return;
+  $("dia-titel").textContent = "Onderwerp bewerken";
+  vulDialoog(o, o.bestand.replace(/\.json$/, ""));
+  $("dia").showModal();
+};
+$("knop-nieuw").onclick = () => {
+  $("dia-titel").textContent = "Nieuw onderwerp";
+  vulDialoog(null, "");
+  $("dia").showModal();
+};
+
+$("knop-annuleer").onclick = () => $("dia").close();
+
+$("knop-bewaar").onclick = async () => {
+  const inhoud = {
+    bestand: $("v-bestand").value.trim(),
+    vraag: $("v-vraag").value.trim(),
+    context: $("v-context").value.trim(),
+    claude: { naam: $("v-claude-naam").value.trim(), positie: $("v-claude-positie").value.trim() },
+    codex: { naam: $("v-codex-naam").value.trim(), positie: $("v-codex-positie").value.trim() },
+    briefing: $("v-briefing").value.trim(),
+    projectmap: projectmap || "",
+  };
+  if (!inhoud.bestand || !inhoud.vraag) return alert("Bestandsnaam en vraag zijn verplicht.");
+  try {
+    const r = await haal("/api/onderwerp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(inhoud),
+    });
+    await laadOnderwerpen(r.bestand);
+    $("dia").close();
+  } catch (e) { alert("Opslaan mislukt: " + e.message); }
+};
+
+async function laadModellen() {
+  const m = await haal("/api/modellen");
+  const vul = (id, lijst) => {
+    const sel = $(id);
+    sel.innerHTML = "";
+    lijst.forEach((x) => {
+      const opt = document.createElement("option");
+      opt.value = x.waarde;
+      opt.textContent = x.label;
+      sel.appendChild(opt);
+    });
+  };
+  vul("claude-model", m.claude);
+  vul("codex-model", m.codex);
+  $("modellen-info").textContent = m.gecontroleerd_op
+    ? `Modellen gecontroleerd op ${m.gecontroleerd_op.slice(0, 10)}`
+    : "Modellen nog niet gecontroleerd op deze machine: draai controleer_modellen.py";
+}
+
+(async function begin() {
+  await laadModellen();
+  await laadOnderwerpen();
+  await laadGeschiedenis();
+  const s = await haal("/api/status?vanaf=0");
+  if (s.actief || s.run) { toonBeurten(s.nieuwe, true); startPollen(); }
+})();
+</script>
+</body>
+</html>
