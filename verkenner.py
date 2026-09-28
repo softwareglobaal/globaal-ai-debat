@@ -87,11 +87,14 @@ def genegeerd_door_git(wortel: Path, paden: list) -> set:
         return set()
     # Git spreekt altijd met /; terugvertalen naar de schrijfwijze van dit OS, anders
     # matcht er op macOS en Linux (of juist op Windows) niets en lekt .gitignore.
-    invoer = "\n".join(p.relative_to(wortel).as_posix() for p in paden)
+    # NUL-gescheiden en als bytes: in tekstmodus maakt Windows van elke \n een \r\n,
+    # en dan leest git "pad\r" en matcht niets.
+    invoer = b"\0".join(p.relative_to(wortel).as_posix().encode("utf-8") for p in paden)
     r = debat.subprocess.run(
-        [git, "check-ignore", "--stdin"], input=invoer, capture_output=True,
-        text=True, encoding="utf-8", errors="replace", cwd=str(wortel))
-    return {str(Path(regel.strip())) for regel in r.stdout.splitlines() if regel.strip()}
+        [git, "check-ignore", "--stdin", "-z"], input=invoer, capture_output=True,
+        cwd=str(wortel))
+    uit = r.stdout.decode("utf-8", errors="replace")
+    return {str(Path(pad)) for pad in uit.split("\0") if pad}
 
 
 def verzamel(wortel: Path) -> dict:

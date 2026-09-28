@@ -166,7 +166,7 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | model staat in de lijst maar geeft een fout | lijst niet gecontroleerd op deze machine | `python controleer_modellen.py` |
 | Bewaren in het onderwerpvenster doet niets | het `close`-event van `<dialog>` vuurt niet betrouwbaar | acties hangen aan de klik op de knop; niet terug naar het close-event |
 | element met `hidden` blijft zichtbaar | een klasse met `display: flex` wint van `hidden` | `[hidden] { display: none !important; }` staat in de CSS; laten staan |
-| een map uit `.gitignore` zit toch in de briefing | git antwoordt met `/`, er werd naar `\` omgezet (alleen goed op Windows) | `verkenner.genegeerd_door_git` vertaalt via `Path`; test dekt het |
+| een map uit `.gitignore` zit toch in de briefing | git antwoordt met `/`, er werd naar `\` omgezet; op Windows maakte tekstmodus van `\n` een `\r\n` | `verkenner.genegeerd_door_git` gebruikt `-z` met bytes en vertaalt via `Path`; test draait op drie OS'en |
 | na Nu stoppen blijft codex doorlopen (macOS) | alleen de ouder werd gedood | kinderen starten met `start_new_session`, stoppen met `os.killpg` |
 | `claude` of `codex` niet gevonden bij start vanuit Finder | `~/.local/bin` en `/opt/homebrew/bin` niet op PATH | `start.sh` zet ze erbij; op macOS starten via `start.command` |
 | accenten worden vreemde tekens in de console | Windows-console is geen UTF-8 | `debat.py` zet stdout op UTF-8; bestanden altijd met `encoding="utf-8"` |
