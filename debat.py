@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import sys
@@ -121,8 +122,9 @@ def bouw_prompt(onderwerp: dict, rol: dict, geschiedenis: list, max_woorden: int
 def stop_proces(proc) -> None:
     """Schiet een lopend kindproces af, inclusief zijn eigen kinderen.
 
-    Op Windows is `codex` een .CMD-shim die een echte codex.exe start; alleen de
-    shim doden laat dat kind draaien. Altijd op PID, nooit op procesnaam.
+    Op Windows is `codex` een .CMD-shim die een echte codex.exe start; op macOS en
+    Linux is het een Node-script dat hetzelfde doet. Alleen de ouder doden laat dat
+    kind draaien. Altijd op PID of procesgroep, nooit op procesnaam.
     """
     if proc is None or proc.poll() is not None:
         return
@@ -130,7 +132,11 @@ def stop_proces(proc) -> None:
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                        capture_output=True, text=True)
     else:
-        proc.kill()
+        # _draai start elk kind met een eigen sessie, dus de groep is precies die boom.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
 
 
 def _draai(cmd: list, invoer: str, timeout: int, registreer, werkmap=None) -> tuple:
@@ -139,7 +145,8 @@ def _draai(cmd: list, invoer: str, timeout: int, registreer, werkmap=None) -> tu
     proc = subprocess.Popen(
         cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace",
-        cwd=str(werkmap) if werkmap else None)
+        cwd=str(werkmap) if werkmap else None,
+        start_new_session=(os.name != "nt"))
     if registreer:
         registreer(proc)
     try:

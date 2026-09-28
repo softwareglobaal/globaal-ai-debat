@@ -100,11 +100,17 @@ def diff_van(werkmap: Path) -> dict:
 
 
 def roep_uitvoerder(systeem, prompt, model, timeout, werkmap, bash, registreer=None):
+    # acceptEdits keurt schrijven alleen binnen de werkmap (de worktree) goed; buiten die
+    # map zou er om toestemming gevraagd worden, en in -p betekent dat geweigerd. Zo is
+    # "werk alleen in deze map" een grendel en niet alleen een zin in de prompt.
+    # Bash moet dan apart worden toegestaan; dat is precies de bewuste keuze van het vinkje.
     cmd = [debat.vind("claude"), "-p", "--safe-mode",
            "--tools", UITVOER_TOOLS_RUIM if bash else UITVOER_TOOLS_VEILIG,
-           "--permission-mode", "bypassPermissions",
+           "--permission-mode", "acceptEdits",
            "--no-session-persistence", "--output-format", "text",
            "--system-prompt", systeem, "--model", model]
+    if bash:
+        cmd += ["--allowedTools", "Bash"]
     code, uit, fout = debat._draai(cmd, prompt, timeout, registreer, werkmap)
     if code != 0:
         raise RuntimeError(f"claude gaf exitcode {code}: {(fout.strip() or uit.strip())[:500]}")

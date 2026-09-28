@@ -322,6 +322,10 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 const $ = (id) => document.getElementById(id);
 let onderwerpen = [], getoond = 0, pollTimer = null, historisch = false;
 
+// De server weigert elk schrijvend verzoek dat geen JSON is (bescherming tegen
+// andere websites), dus ook een POST zonder inhoud stuurt een lege JSON mee.
+const POST = { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" };
+
 async function haal(url, opties) {
   const r = await fetch(url, opties);
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).fout || r.statusText);
@@ -550,7 +554,7 @@ $("knop-start").onclick = async () => {
   } catch (e) { alert("Starten mislukt: " + e.message); }
 };
 
-$("knop-stop").onclick = () => haal("/api/stop", { method: "POST" });
+$("knop-stop").onclick = () => haal("/api/stop", POST);
 $("onderwerp").onchange = toonOnderwerpInfo;
 
 async function stuurInjectie() {
@@ -722,7 +726,7 @@ $("knop-briefing").onclick = async () => {
   }
 };
 
-$("knop-briefing-stop").onclick = () => haal("/api/briefing/stop", { method: "POST" });
+$("knop-briefing-stop").onclick = () => haal("/api/briefing/stop", POST);
 
 async function controleerBriefing() {
   const tekst = $("v-briefing").value.trim();

@@ -62,6 +62,27 @@ def _startmap() -> Path:
 STARTMAP = _startmap()
 MODELLEN = BASIS / "modellen.json"
 
+POORT = 8099
+EIGEN_HOSTS = {f"127.0.0.1:{POORT}", f"localhost:{POORT}"}
+
+
+@app.before_request
+def alleen_eigen_pagina():
+    """Loopback is geen afscherming: elke website die je open hebt kan naar
+    127.0.0.1 posten. Daarom moet een schrijvend verzoek echte JSON zijn (dat
+    dwingt bij een vreemde site een CORS-preflight af, die wij niet beantwoorden)
+    en van onze eigen pagina komen. De Host-controle houdt DNS-rebinding tegen."""
+    if request.host not in EIGEN_HOSTS:
+        return jsonify({"fout": "onbekende host"}), 403
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    herkomst = request.headers.get("Origin")
+    if herkomst is not None and herkomst.split("://", 1)[-1] not in EIGEN_HOSTS:
+        return jsonify({"fout": "verzoek van een andere website geweigerd"}), 403
+    if not request.is_json:
+        return jsonify({"fout": "alleen application/json"}), 415
+    return None
+
 
 def zet(**velden):
     with LOCK:
@@ -466,7 +487,6 @@ def index():
 
 
 if __name__ == "__main__":
-    poort = 8099
     if "--geen-browser" not in sys.argv:
-        threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{poort}")).start()
-    app.run(host="127.0.0.1", port=poort, threaded=True)
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{POORT}")).start()
+    app.run(host="127.0.0.1", port=POORT, threaded=True)

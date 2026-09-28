@@ -85,11 +85,13 @@ def genegeerd_door_git(wortel: Path, paden: list) -> set:
     git = debat.shutil.which("git")
     if not git:
         return set()
-    invoer = "\n".join(str(p.relative_to(wortel)) for p in paden)
+    # Git spreekt altijd met /; terugvertalen naar de schrijfwijze van dit OS, anders
+    # matcht er op macOS en Linux (of juist op Windows) niets en lekt .gitignore.
+    invoer = "\n".join(p.relative_to(wortel).as_posix() for p in paden)
     r = debat.subprocess.run(
         [git, "check-ignore", "--stdin"], input=invoer, capture_output=True,
         text=True, encoding="utf-8", errors="replace", cwd=str(wortel))
-    return {regel.strip().replace("/", "\\") for regel in r.stdout.splitlines() if regel.strip()}
+    return {str(Path(regel.strip())) for regel in r.stdout.splitlines() if regel.strip()}
 
 
 def verzamel(wortel: Path) -> dict:

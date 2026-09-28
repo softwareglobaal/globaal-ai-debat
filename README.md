@@ -20,7 +20,8 @@ De twee logins doe je zelf in de browser; niemand anders hoeft je wachtwoord.
 
 ## Webinterface (de gewone manier)
 
-Windows: dubbelklik op `start.cmd`. macOS of Linux: `./start.sh`. Of rechtstreeks:
+Windows: dubbelklik op `start.cmd`. macOS: dubbelklik op `start.command`. Linux:
+`./start.sh`. Of rechtstreeks:
 
 ```
 python web.py
@@ -182,6 +183,14 @@ Dit is bewust geen agent-opstelling:
 
 Geen van beide kanten kan dus bij de VM, de databases of je credentials. Zet daar niets
 aan open: een debatdeelnemer met tools is een prompt-injectiekanaal.
+
+In opdrachtmodus draait de uitvoerder met `--permission-mode acceptEdits`: schrijven kan
+alleen in zijn eigen worktree, niet elders op je schijf.
+
+De server luistert alleen op 127.0.0.1, maar dat houdt websites in je eigen browser niet
+tegen. Daarom weigert hij elk schrijvend verzoek dat geen JSON is, van een andere site
+komt of een vreemde hostnaam draagt. `python -m unittest test_grendels -v` controleert
+dat, en de CI draait het bij elke push.
 
 ## Let op
 

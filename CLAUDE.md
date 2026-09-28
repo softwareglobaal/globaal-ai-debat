@@ -142,6 +142,14 @@ Meld aan de gebruiker welke modellen werken, en waar de app staat.
 - **Wat naar OpenAI gaat.** Alles in `context` en `briefing` gaat mee naar de
   ChatGPT-kant. Geen hostnamen, IP-adressen, e-mailadressen, sleutels of persoonsgegevens.
   De briefing-scan waarschuwt, maar haalt niets weg.
+- **Loopback is geen afscherming.** Elke website in de browser kan naar 127.0.0.1
+  posten. `web.alleen_eigen_pagina` weigert daarom elk schrijvend verzoek dat geen
+  `application/json` is, van een andere `Origin` komt of een vreemde `Host` draagt.
+  Nooit versoepelen; `test_grendels.py` bewaakt het.
+- **De uitvoerder draait met `acceptEdits`, nooit met `bypassPermissions`.** Dan kan hij
+  alleen in zijn worktree schrijven. Bash wordt apart toegestaan via het vinkje.
+- **Na elke wijziging:** `python -m unittest test_grendels -v`. Moet groen zijn voor je
+  commit; de CI draait hetzelfde.
 - **Draai dit lokaal.** De logins staan op deze machine. Niet op een server zetten
   zonder dat de gebruiker daar bewust voor kiest; dan moeten de logins daar opnieuw en
   deelt die server de abonnementen.
@@ -158,6 +166,9 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | model staat in de lijst maar geeft een fout | lijst niet gecontroleerd op deze machine | `python controleer_modellen.py` |
 | Bewaren in het onderwerpvenster doet niets | het `close`-event van `<dialog>` vuurt niet betrouwbaar | acties hangen aan de klik op de knop; niet terug naar het close-event |
 | element met `hidden` blijft zichtbaar | een klasse met `display: flex` wint van `hidden` | `[hidden] { display: none !important; }` staat in de CSS; laten staan |
+| een map uit `.gitignore` zit toch in de briefing | git antwoordt met `/`, er werd naar `\` omgezet (alleen goed op Windows) | `verkenner.genegeerd_door_git` vertaalt via `Path`; test dekt het |
+| na Nu stoppen blijft codex doorlopen (macOS) | alleen de ouder werd gedood | kinderen starten met `start_new_session`, stoppen met `os.killpg` |
+| `claude` of `codex` niet gevonden bij start vanuit Finder | `~/.local/bin` en `/opt/homebrew/bin` niet op PATH | `start.sh` zet ze erbij; op macOS starten via `start.command` |
 | accenten worden vreemde tekens in de console | Windows-console is geen UTF-8 | `debat.py` zet stdout op UTF-8; bestanden altijd met `encoding="utf-8"` |
 
 ## Bestanden
@@ -171,5 +182,7 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | `verkenner.py` | briefing van een projectmap maken en scannen op gevoelige gegevens |
 | `controleer_modellen.py` | vaststellen welke modellen op deze machine werken |
 | `test_kant.py` | rooktest per kant |
+| `test_grendels.py` | veiligheidsgrendels, zonder abonnement of netwerk; ook in CI |
+| `start.command` | macOS: dubbelklik in Finder |
 | `modellen.standaard.json` | veilige lijst tot `controleer_modellen.py` heeft gedraaid |
 | `onderwerpen/voorbeeld-*.json` | voorbeeldonderwerpen; eigen onderwerpen blijven buiten git |
