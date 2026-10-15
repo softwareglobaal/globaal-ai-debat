@@ -174,6 +174,19 @@ class CodexSh(unittest.TestCase):
         self.assertFalse([x for x in codex_pids if leeft(x)], "Codex of zijn kind draait nog")
         self.assertEqual([b["soort"] for b in self.soorten()], ["opdracht", "fout"])
 
+    def test_signaal_stopt_codex_ook_via_python_wrapper(self):
+        # D14: is de gekozen python een shellwrapper (pyenv, asdf), dan is $! de wrapper en niet de groep van Codex.
+        p = self.start(STUB_SLAAP="30", CODEX_SH_PY=str(self.traag), TRAAG_BIJ="nooit")
+        self.wacht_op(self.pids)
+        codex_pids = [int(x) for x in self.pids.read_text().split()]
+        os.kill(p.pid, signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=10), 130)
+        einde = time.monotonic() + 5
+        while any(leeft(x) for x in codex_pids) and time.monotonic() < einde:
+            time.sleep(0.1)
+        self.assertFalse([x for x in codex_pids if leeft(x)], "Codex draait nog na een signaal via de wrapper")
+        self.assertEqual([b["soort"] for b in self.soorten()], ["opdracht", "fout"])
+
     def test_signaal_tijdens_aanmaken_ronde(self):
         # D10: het signaal valt terwijl de ronde wordt aangemaakt, voor codex.sh haar naam kent.
         p = self.start(CODEX_SH_PY=str(self.traag), TRAAG_BIJ="nieuw")

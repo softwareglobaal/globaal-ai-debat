@@ -6,10 +6,13 @@
 import io
 import json
 import os
+import shutil
+import signal
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -132,18 +135,91 @@ class Rondes(unittest.TestCase):
         self.assertEqual(transcript.count("\n## "), 32)
 
     def test_trage_schrijver_houdt_slot(self):
-        # D03, D08: een schrijver die tussen lezen en schrijven blijft hangen, houdt het slot; een tweede
-        # schrijver wacht en pakt het niet af. Overlap is afgedwongen met de testhaak _NA_LEZEN.
+        # D03, D08, D16: een schrijver die tussen lezen en schrijven blijft hangen, houdt het slot; een tweede
+        # schrijver wacht. Geen vaste slaapduur: de houder blijft binnen tot de test hem loslaat (barrière), en
+        # de tweede schrijver moet op dat moment aantoonbaar nog wachten.
         naam = self.met_antwoord()
-        teken = Path(self.tmp.name) / "binnen"
-        houder = self.proces("ronde._NA_LEZEN = lambda: (Path(sys.argv[3]).touch(), time.sleep(2))\n"
-                             "ronde.voeg_toe(p, 'claude', 'verwerking', 'traag')\n", naam, str(teken))
-        self.wacht_op(teken)
-        ronde.voeg_toe(ronde.run_pad(naam), "claude", "verwerking", "snel")
+        binnen = Path(self.tmp.name) / "binnen"
+        los = Path(self.tmp.name) / "los"
+        houder = self.proces(
+            "def haak():\n    Path(sys.argv[3]).touch()\n    einde = time.monotonic() + 30\n"
+            "    while not Path(sys.argv[4]).exists() and time.monotonic() < einde: time.sleep(0.01)\n"
+            "ronde._NA_LEZEN = haak\nronde.voeg_toe(p, 'claude', 'verwerking', 'traag')\n",
+            naam, str(binnen), str(los))
+        self.wacht_op(binnen)
+        tweede = threading.Thread(target=ronde.voeg_toe,
+                                  args=(ronde.run_pad(naam), "claude", "verwerking", "snel"))
+        tweede.start()
+        tweede.join(1.0)
+        wachtte = tweede.is_alive()
+        los.touch()
+        tweede.join(30)
         self.assertEqual(houder.wait(timeout=30), 0)
+        self.assertTrue(wachtte, "de tweede schrijver wachtte niet op het slot")
         beurten = self.board(naam)
         self.assertEqual([b["nr"] for b in beurten], [1, 2, 3, 4])
         self.assertEqual([b["tekst"] for b in beurten[2:]], ["traag", "snel"])
+
+    def test_onderbroken_aanmaken_laat_geen_halve_ronde(self):
+        # D13: een signaal op elk moment van het aanmaken laat ofwel niets zichtbaars achter, ofwel een volledige
+        # ronde met de opdracht als eerste beurt. Staat er een naam in het naambestand, dan klopt die ronde.
+        for stap in ronde.STAPPEN_NIEUW:
+            with self.subTest(stap=stap):
+                for d in list(debat.RUNS.glob("*")) if debat.RUNS.exists() else []:
+                    shutil.rmtree(d)
+                teken = Path(self.tmp.name) / f"stap-{stap}"
+                naambestand = Path(self.tmp.name) / f"naam-{stap}"
+                p = subprocess.Popen(
+                    [sys.executable, "-c",
+                     "import sys, time, debat, ronde\nfrom pathlib import Path\ndebat.RUNS = Path(sys.argv[1])\n"
+                     "def haak(s):\n    if s == sys.argv[2]:\n        Path(sys.argv[3]).touch(); time.sleep(30)\n"
+                     "ronde._NA_STAP = haak\nronde.nieuw('t', 'opdracht', naambestand=sys.argv[4])\n",
+                     str(debat.RUNS), stap, str(teken), str(naambestand)], cwd=Path(__file__).parent)
+                self.wacht_op(teken)
+                p.send_signal(signal.SIGINT)
+                p.wait(timeout=10)
+                zichtbaar = [d for d in debat.RUNS.iterdir() if d.is_dir() and not d.name.startswith(".")]
+                for d in zichtbaar:
+                    beurten = [json.loads(r) for r in (d / "board.jsonl").read_text(encoding="utf-8").splitlines()
+                               if r.strip()]
+                    self.assertTrue(beurten and beurten[0]["soort"] == "opdracht", f"halve ronde {d.name}")
+                if naambestand.exists():
+                    naam = naambestand.read_text(encoding="utf-8").strip()
+                    if (debat.RUNS / naam).exists():
+                        self.assertEqual(self.board(naam)[0]["soort"], "opdracht")
+                    else:
+                        # De val van codex.sh kent de naam, maar de ronde bestaat niet: een FOUT maakt niets aan.
+                        with self.assertRaises(FileNotFoundError):
+                            ronde.run_pad(naam)
+
+    def test_uitkomst_nooit_als_eerste_beurt(self):
+        # D13: ook als een ronde ooit zonder opdracht zou bestaan, wordt FOUT nooit de eerste beurt.
+        debat.RUNS.mkdir(parents=True, exist_ok=True)
+        leeg = debat.RUNS / "20261015-180000-codex"
+        leeg.mkdir()
+        (leeg / "board.jsonl").write_text("", encoding="utf-8")
+        (leeg / "onderwerp.json").write_text('{"vraag": "t"}', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            ronde.voeg_toe(ronde.run_pad(leeg.name), "codex", "fout", "onderbroken")
+
+    def test_geopend_slot_moet_het_bestand_zelf_zijn(self):
+        # D15: op Windows bestaat O_NOFOLLOW niet. Wat er ook geopend werd, het moet het gewone bestand .slot zelf
+        # zijn, geen doel achter een symlink.
+        naam = self.met_antwoord()
+        slot = debat.RUNS / naam / ".slot"
+        buiten = Path(self.tmp.name) / "buiten-slot"
+        buiten.write_text("", encoding="utf-8")
+        slot.unlink()
+        try:
+            os.symlink(buiten, slot)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks niet toegestaan op dit systeem")
+        fd = os.open(buiten, os.O_RDWR)
+        try:
+            with self.assertRaises(ValueError):
+                ronde._controleer_geopend(fd, slot)
+        finally:
+            os.close(fd)
 
     def test_slot_van_gecrasht_proces_komt_vrij(self):
         # D08: geen verlooptijd nodig; het besturingssysteem geeft het slot vrij als de houder sterft.

@@ -456,7 +456,9 @@ def api_briefing_stop():
 @app.get("/api/runs")
 def api_runs():
     lijst = []
-    mappen = sorted((p for p in RUNS.iterdir() if p.is_dir()), reverse=True) if RUNS.is_dir() else []
+    # Verborgen mappen (runs/.nieuw-*) zijn rondes in opbouw of resten van een onderbreking.
+    mappen = sorted((p for p in RUNS.iterdir() if p.is_dir() and not p.name.startswith(".")),
+                    reverse=True) if RUNS.is_dir() else []
     for pad in mappen:
         board = pad / "board.jsonl"
         if not board.exists():

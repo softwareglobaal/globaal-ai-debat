@@ -1,5 +1,5 @@
 #!/bin/bash
-# codex.sh v1.3 (15-10-2026) - de vaste manier waarop Claude Codex aanroept: `codex exec`.
+# codex.sh v1.4 (15-10-2026) - de vaste manier waarop Claude Codex aanroept: `codex exec`.
 # Elke ronde komt in het dashboard van ai-debat (http://127.0.0.1:8099, links bij de eerdere runs).
 # De MCP-koppeling (`codex mcp-server`) bestaat niet meer sinds Codex 0.15x; niet terugzetten.
 # Bron: repo softwareglobaal/globaal-ai-debat; ~/.claude/tools/codex.sh verwijst hierheen.
@@ -118,14 +118,27 @@ OPDRACHT="$(cat)"; [ -n "$OPDRACHT" ] || fout "opdracht is leeg"
 
 START=$SECONDS
 RUN="" GESTART=0
+# De starter schrijft hier het groepsnummer van Codex. $! is niet genoeg: start python via een shellwrapper
+# (pyenv, asdf), dan is $! de wrapper en zit Codex in een andere groep.
+GROEP="$(mktemp "${TMPDIR:-/tmp}/codex-sh-groep.XXXXXX")" || fout "geen tijdelijk bestand voor de procesgroep"
+trap 'rm -f "$GROEP"' EXIT
+
+stop_codex() {
+  [ "$GESTART" = 1 ] || return 0
+  [ -n "${!:-}" ] && kill -TERM "$!" 2>/dev/null   # de starter zelf: python of een wrapper
+  local g i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    g="$(cat "$GROEP" 2>/dev/null)"
+    if [ -n "$g" ]; then kill -TERM -- "-$g" 2>/dev/null; return 0; fi
+    sleep 0.1
+  done
+}
 # Onderbroken (Ctrl-C, kill, sessie gestopt): Codex en zijn kinderen stoppen en de ronde als fout markeren.
 # De val staat er voor de ronde bestaat. ronde.py aanvaardt per ronde maar een uitkomst, dus een signaal na
 # CONTROLE of FOUT geeft nooit een tweede.
 onderbroken() {
   trap - INT TERM HUP
-  if [ "$GESTART" = 1 ] && [ -n "${!:-}" ]; then
-    kill -TERM -- "-$!" 2>/dev/null || kill -TERM "$!" 2>/dev/null
-  fi
+  stop_codex
   [ -n "$RUN" ] || RUN="$(cat "$RAPPORT.ronde" 2>/dev/null)"
   if [ -n "$RUN" ]; then
     echo "Onderbroken door een signaal na $((SECONDS - START)) s." \
@@ -151,10 +164,14 @@ ARGS=(exec --ephemeral --skip-git-repo-check -s "$SANDBOX" -C "$MAP" -o "$RAPPOR
 [ $# -gt 0 ] && ARGS+=("$@")
 
 # Codex in een eigen procesgroep (setsid) en op de achtergrond met wait: een signaal bereikt meteen de val,
-# en die stopt de hele groep, ook wat Codex zelf startte.
+# en die stopt de hele groep, ook wat Codex zelf startte. Na setsid is het pid van de starter de groep.
 GESTART=1
-"$PY" -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$CODEX" "${ARGS[@]}" - \
-  <<<"$OPDRACHT" > "$RAPPORT.log" 2>&1 &
+"$PY" -I -c 'import os, sys
+os.setsid()
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_TRUNC)
+os.write(fd, str(os.getpid()).encode())
+os.close(fd)
+os.execvp(sys.argv[2], sys.argv[2:])' "$GROEP" "$CODEX" "${ARGS[@]}" - <<<"$OPDRACHT" > "$RAPPORT.log" 2>&1 &
 wait "$!"
 CODE=$?
 GESTART=0

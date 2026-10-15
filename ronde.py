@@ -20,7 +20,10 @@ import json
 import math
 import os
 import re
+import shutil
+import stat
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -45,6 +48,8 @@ BESTANDEN = ("board.jsonl", "onderwerp.json", "transcript.md")
 UITKOMST = ("controle", "fout")   # een ronde krijgt er precies een
 SLOT_WACHT_S = 10                 # zo lang wacht een beurt op een andere beurt van dezelfde ronde
 _NA_LEZEN = None                  # alleen voor tests: aangeroepen binnen het slot, tussen lezen en schrijven
+STAPPEN_NIEUW = ("tijdelijk", "naam", "zichtbaar")
+_NA_STAP = None                   # alleen voor tests: aangeroepen na elke stap van nieuw()
 
 
 def _runs() -> Path:
@@ -94,6 +99,19 @@ def _laat_slot(fd: int) -> None:
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
 
+def _controleer_geopend(fd: int, slot: Path) -> None:
+    """Wat geopend werd, moet het gewone bestand .slot zelf zijn. Zonder O_NOFOLLOW (Windows) kan een ander
+    proces .slot tussen controle en open door een symlink vervangen; dan wijst de open naar een ander bestand."""
+    geopend = os.fstat(fd)
+    try:
+        op_pad = os.lstat(slot)
+    except OSError as e:
+        raise ValueError(f"slot verdween tijdens het openen: {slot}") from e
+    if (not stat.S_ISREG(geopend.st_mode) or stat.S_ISLNK(op_pad.st_mode)
+            or (geopend.st_dev, geopend.st_ino) != (op_pad.st_dev, op_pad.st_ino)):
+        raise ValueError(f"geopend slot is niet het gewone bestand {slot}")
+
+
 @contextmanager
 def _slot(pad: Path):
     """Eén beurt tegelijk per ronde, met een slot van het besturingssysteem op .slot. Het komt vrij zodra
@@ -102,9 +120,17 @@ def _slot(pad: Path):
     slot = pad / ".slot"
     if slot.is_symlink() or (slot.exists() and not slot.is_file()):
         raise ValueError(f"onverwacht slot, geen gewoon bestand: {slot}")
-    vlaggen = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
-    fd = os.open(slot, vlaggen, 0o600)
+    vlaggen = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     try:
+        # O_EXCL maakt alleen een nieuw bestand en volgt nooit een symlink, ook niet op Windows.
+        fd = os.open(slot, vlaggen | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        try:
+            fd = os.open(slot, vlaggen)  # zonder O_CREAT: een symlink naar niets maakt buiten runs/ niets aan
+        except OSError as e:
+            raise ValueError(f"slot niet te openen als gewoon bestand: {slot} ({e})") from e
+    try:
+        _controleer_geopend(fd, slot)
         einde = time.monotonic() + SLOT_WACHT_S
         while not _probeer_slot(fd):
             if time.monotonic() > einde:
@@ -137,18 +163,33 @@ def _tijd(tijd) -> str:
     return moment.isoformat(timespec="seconds")
 
 
-def voeg_toe(pad: Path, kant: str, soort: str, tekst: str, model: str = "",
-             duur=None, tijd=None) -> dict:
+def _maak_beurt(nr: int, kant: str, soort: str, tekst: str, model: str = "", duur=None, tijd=None) -> dict:
     if (kant, soort) not in SPREKERS:
         raise ValueError(f"onbekende beurt: kant {kant!r}, soort {soort!r}")
     tekst = (tekst or "").strip()
     if not tekst:
         raise ValueError("tekst is leeg")
-    duur_s = _duur(duur)
+    return {
+        "nr": nr,
+        "spreker": SPREKERS[(kant, soort)],
+        "kant": kant,
+        "soort": soort,
+        "model": model or "",
+        "tijd": _tijd(tijd),
+        "duur_s": _duur(duur),
+        "tekst": tekst,
+    }
+
+
+def voeg_toe(pad: Path, kant: str, soort: str, tekst: str, model: str = "",
+             duur=None, tijd=None) -> dict:
+    _maak_beurt(0, kant, soort, tekst, model, duur, tijd)  # invoer controleren voor het slot
     _geen_symlinks(pad)
     with _slot(pad):
         _geen_symlinks(pad)
         beurten = _beurten(pad)
+        if not beurten or beurten[0].get("soort") != "opdracht":
+            raise ValueError(f"ronde {pad.name} begint niet met een opdracht")
         uitkomst = [b["soort"] for b in beurten if b.get("soort") in UITKOMST]
         if soort in UITKOMST and uitkomst:
             raise ValueError(f"ronde {pad.name} heeft al een uitkomst ({uitkomst[0]})")
@@ -156,16 +197,7 @@ def voeg_toe(pad: Path, kant: str, soort: str, tekst: str, model: str = "",
             raise ValueError(f"ronde {pad.name} heeft nog geen antwoord of fout van Codex")
         if _NA_LEZEN:
             _NA_LEZEN()
-        beurt = {
-            "nr": len(beurten) + 1,
-            "spreker": SPREKERS[(kant, soort)],
-            "kant": kant,
-            "soort": soort,
-            "model": model or "",
-            "tijd": _tijd(tijd),
-            "duur_s": duur_s,
-            "tekst": tekst,
-        }
+        beurt = _maak_beurt(len(beurten) + 1, kant, soort, tekst, model, duur, tijd)
         with (pad / "board.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(beurt, ensure_ascii=False, allow_nan=False) + "\n")
         onderwerp = json.loads((pad / "onderwerp.json").read_text(encoding="utf-8"))
@@ -173,35 +205,60 @@ def voeg_toe(pad: Path, kant: str, soort: str, tekst: str, model: str = "",
     return beurt
 
 
+def _stap(naam: str) -> None:
+    if _NA_STAP:
+        _NA_STAP(naam)
+
+
 def nieuw(titel: str, opdracht: str, tijd=None, naambestand=None, **gegevens) -> str:
-    """Maakt de ronde met de opdracht als eerste beurt en geeft de naam terug. Met naambestand staat
-    de naam ook meteen op schijf, zodat codex.sh hem vindt als het onderbroken wordt voor het hem las."""
+    """Maakt de ronde met de opdracht als eerste beurt en geeft de naam terug.
+
+    De ronde wordt volledig opgebouwd in een verborgen map (runs/.nieuw-*) en pas daarna in een stap onder haar
+    naam gezet (rename is atomisch). Een onderbreking laat dus nooit een halve ronde zichtbaar achter. Met
+    naambestand staat de naam op schijf voor de ronde zichtbaar wordt; zo vindt codex.sh hem altijd."""
     titel = " ".join((titel or "").split())
     if not titel:
         raise ValueError("titel is leeg")
     if not (opdracht or "").strip():
         raise ValueError("opdracht is leeg")
     moment = datetime.fromisoformat(tijd) if tijd else datetime.now()
-    basis = moment.strftime("%Y%m%d-%H%M%S") + "-codex"
+    eerste = _maak_beurt(1, "claude", "opdracht", opdracht, model="Claude Code", tijd=moment.isoformat())
+    onderwerp = {"vraag": titel, "modus": "ronde", **{k: v for k, v in gegevens.items() if v}}
     runs = _runs()
     runs.mkdir(parents=True, exist_ok=True)
-    naam, i = basis, 1
-    while True:
-        try:
-            (runs / naam).mkdir()
-            break
-        except FileExistsError:
-            i += 1
-            naam = f"{basis}-{i}"
-    pad = runs / naam
-    onderwerp = {"vraag": titel, "modus": "ronde", **{k: v for k, v in gegevens.items() if v}}
-    (pad / "onderwerp.json").write_text(json.dumps(onderwerp, ensure_ascii=False, indent=2),
-                                        encoding="utf-8")
-    (pad / "board.jsonl").write_text("", encoding="utf-8")
-    if naambestand:
-        Path(naambestand).write_text(naam + "\n", encoding="utf-8")
-    voeg_toe(pad, "claude", "opdracht", opdracht, model="Claude Code", tijd=moment.isoformat())
-    return naam
+    tijdelijk = Path(tempfile.mkdtemp(prefix=".nieuw-", dir=runs))
+    try:
+        (tijdelijk / "onderwerp.json").write_text(json.dumps(onderwerp, ensure_ascii=False, indent=2),
+                                                  encoding="utf-8")
+        (tijdelijk / "board.jsonl").write_text(json.dumps(eerste, ensure_ascii=False, allow_nan=False) + "\n",
+                                               encoding="utf-8")
+        debat.schrijf_transcript(tijdelijk, onderwerp, [eerste])
+        _stap("tijdelijk")
+        basis = moment.strftime("%Y%m%d-%H%M%S") + "-codex"
+        naam, i = basis, 1
+        while True:
+            doel = runs / naam
+            if doel.exists() or doel.is_symlink():
+                i += 1
+                naam = f"{basis}-{i}"
+                continue
+            if naambestand:
+                Path(naambestand).write_text(naam + "\n", encoding="utf-8")
+            _stap("naam")
+            try:
+                os.rename(tijdelijk, doel)
+                break
+            except OSError:
+                if not doel.exists():
+                    raise
+                i += 1
+                naam = f"{basis}-{i}"
+        _stap("zichtbaar")
+        return naam
+    except BaseException:
+        if tijdelijk.exists():
+            shutil.rmtree(tijdelijk, ignore_errors=True)
+        raise
 
 
 def main(argv=None) -> int:

@@ -180,6 +180,8 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | na Nu stoppen blijft codex doorlopen (macOS) | alleen de ouder werd gedood | kinderen starten met `start_new_session`, stoppen met `os.killpg` |
 | `claude` of `codex` niet gevonden bij start vanuit Finder | `~/.local/bin` en `/opt/homebrew/bin` niet op PATH | `start.sh` zet ze erbij; op macOS starten via `start.command` |
 | accenten worden vreemde tekens in de console | Windows-console is geen UTF-8 | `debat.py` zet stdout op UTF-8; bestanden altijd met `encoding="utf-8"` |
+| Codex draait door na een signaal aan `codex.sh` | python startte via een shellwrapper (pyenv, asdf): `$!` is de wrapper, Codex zit in een andere groep | de starter schrijft na `setsid` zijn pid (= groep) naar een tijdelijk bestand; de val stopt die groep (Codex-controle 3, D14) |
+| halve ronde of FOUT als eerste beurt na een onderbreking | de ronde was zichtbaar voor ze af was | `ronde.nieuw` bouwt in `runs/.nieuw-*` en hernoemt pas als alles er staat; `/api/runs` slaat verborgen mappen over (Codex-controle 3, D13) |
 
 ## Bestanden
 
