@@ -4,6 +4,7 @@
 """
 
 import io
+import itertools
 import json
 import os
 import shutil
@@ -163,12 +164,14 @@ class Rondes(unittest.TestCase):
     def test_onderbroken_aanmaken_laat_geen_halve_ronde(self):
         # D13: een signaal op elk moment van het aanmaken laat ofwel niets zichtbaars achter, ofwel een volledige
         # ronde met de opdracht als eerste beurt. Staat er een naam in het naambestand, dan klopt die ronde.
-        for stap in ronde.STAPPEN_NIEUW:
-            with self.subTest(stap=stap):
+        # Windows kent geen SIGINT voor een subproces; terminate() is daar een harde stop zonder opruimen.
+        stops = [signal.SIGINT, signal.SIGKILL] if os.name == "posix" else ["terminate"]
+        for stap, stop in itertools.product(ronde.STAPPEN_NIEUW, stops):
+            with self.subTest(stap=stap, stop=str(stop)):
                 for d in list(debat.RUNS.glob("*")) if debat.RUNS.exists() else []:
                     shutil.rmtree(d)
-                teken = Path(self.tmp.name) / f"stap-{stap}"
-                naambestand = Path(self.tmp.name) / f"naam-{stap}"
+                teken = Path(self.tmp.name) / f"stap-{stap}-{stop}"
+                naambestand = Path(self.tmp.name) / f"naam-{stap}-{stop}"
                 p = subprocess.Popen(
                     [sys.executable, "-c",
                      "import sys, time, debat, ronde\nfrom pathlib import Path\ndebat.RUNS = Path(sys.argv[1])\n"
@@ -176,7 +179,10 @@ class Rondes(unittest.TestCase):
                      "ronde._NA_STAP = haak\nronde.nieuw('t', 'opdracht', naambestand=sys.argv[4])\n",
                      str(debat.RUNS), stap, str(teken), str(naambestand)], cwd=Path(__file__).parent)
                 self.wacht_op(teken)
-                p.send_signal(signal.SIGINT)
+                if stop == "terminate":
+                    p.terminate()
+                else:
+                    p.send_signal(stop)
                 p.wait(timeout=10)
                 zichtbaar = [d for d in debat.RUNS.iterdir() if d.is_dir() and not d.name.startswith(".")]
                 for d in zichtbaar:
