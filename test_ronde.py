@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -101,21 +102,109 @@ class Rondes(unittest.TestCase):
                 ronde.voeg_toe(pad, "codex", "controle", "a", duur=slecht)
         self.assertEqual(len(self.board(pad.name)), 1)
 
+    KOP = ("import sys, time, debat, ronde\nfrom pathlib import Path\ndebat.RUNS = Path(sys.argv[1])\n"
+           "p = ronde.run_pad(sys.argv[2])\n")
+
+    def proces(self, code, *args):
+        return subprocess.Popen([sys.executable, "-c", self.KOP + code, str(debat.RUNS), *args],
+                                cwd=Path(__file__).parent)
+
+    def wacht_op(self, pad, s=20):
+        einde = time.monotonic() + s
+        while not pad.exists():
+            self.assertLess(time.monotonic(), einde, f"{pad} kwam er niet")
+            time.sleep(0.02)
+
+    def met_antwoord(self):
+        naam = ronde.nieuw("t", "x")
+        ronde.voeg_toe(ronde.run_pad(naam), "codex", "controle", "antwoord")
+        return naam
+
     def test_gelijktijdige_beurten_elk_een_nummer(self):
         # D03: twee processen tegelijk op dezelfde ronde: geen dubbele nummers, niets kwijt.
-        naam = ronde.nieuw("t", "x")
-        code = ("import sys, debat, ronde\nfrom pathlib import Path\ndebat.RUNS = Path(sys.argv[1])\n"
-                "p = ronde.run_pad(sys.argv[2])\n"
-                "for i in range(15): ronde.voeg_toe(p, 'codex', 'controle', sys.argv[3] + str(i))\n")
-        procs = [subprocess.Popen([sys.executable, "-c", code, str(debat.RUNS), naam, k],
-                                  cwd=Path(__file__).parent) for k in "ab"]
+        naam = self.met_antwoord()
+        procs = [self.proces("for i in range(15): ronde.voeg_toe(p, 'claude', 'verwerking', sys.argv[3] + str(i))\n",
+                             naam, k) for k in "ab"]
         for p in procs:
             self.assertEqual(p.wait(timeout=120), 0)
-        beurten = self.board(naam)
-        self.assertEqual([b["nr"] for b in beurten], list(range(1, 32)))
+        self.assertEqual([b["nr"] for b in self.board(naam)], list(range(1, 33)))
         transcript = (debat.RUNS / naam / "transcript.md").read_text(encoding="utf-8")
-        self.assertEqual(transcript.count("\n## "), 31)
-        self.assertFalse((debat.RUNS / naam / ".slot").exists())
+        self.assertEqual(transcript.count("\n## "), 32)
+
+    def test_trage_schrijver_houdt_slot(self):
+        # D03, D08: een schrijver die tussen lezen en schrijven blijft hangen, houdt het slot; een tweede
+        # schrijver wacht en pakt het niet af. Overlap is afgedwongen met de testhaak _NA_LEZEN.
+        naam = self.met_antwoord()
+        teken = Path(self.tmp.name) / "binnen"
+        houder = self.proces("ronde._NA_LEZEN = lambda: (Path(sys.argv[3]).touch(), time.sleep(2))\n"
+                             "ronde.voeg_toe(p, 'claude', 'verwerking', 'traag')\n", naam, str(teken))
+        self.wacht_op(teken)
+        ronde.voeg_toe(ronde.run_pad(naam), "claude", "verwerking", "snel")
+        self.assertEqual(houder.wait(timeout=30), 0)
+        beurten = self.board(naam)
+        self.assertEqual([b["nr"] for b in beurten], [1, 2, 3, 4])
+        self.assertEqual([b["tekst"] for b in beurten[2:]], ["traag", "snel"])
+
+    def test_slot_van_gecrasht_proces_komt_vrij(self):
+        # D08: geen verlooptijd nodig; het besturingssysteem geeft het slot vrij als de houder sterft.
+        naam = self.met_antwoord()
+        teken = Path(self.tmp.name) / "vast"
+        houder = self.proces("import os\nwith ronde._slot(p):\n    Path(sys.argv[3]).touch()\n    time.sleep(1)\n"
+                             "    os._exit(9)\n", naam, str(teken))
+        self.wacht_op(teken)
+        self.assertEqual(houder.wait(timeout=30), 9)
+        begin = time.monotonic()
+        ronde.voeg_toe(ronde.run_pad(naam), "claude", "verwerking", "na de crash")
+        self.assertLess(time.monotonic() - begin, 2)
+
+    def test_slot_van_levende_houder_wordt_niet_afgepakt(self):
+        naam = self.met_antwoord()
+        teken = Path(self.tmp.name) / "vast"
+        houder = self.proces("with ronde._slot(p):\n    Path(sys.argv[3]).touch()\n    time.sleep(3)\n",
+                             naam, str(teken))
+        self.wacht_op(teken)
+        oud = ronde.SLOT_WACHT_S
+        ronde.SLOT_WACHT_S = 0.5
+        try:
+            with self.assertRaises(TimeoutError):
+                ronde.voeg_toe(ronde.run_pad(naam), "claude", "verwerking", "te vroeg")
+        finally:
+            ronde.SLOT_WACHT_S = oud
+        self.assertEqual(houder.wait(timeout=30), 0)
+        self.assertEqual(len(self.board(naam)), 2)
+
+    def test_vreemd_slot_geweigerd_zonder_te_hangen(self):
+        # D09: een slotmap (oude versie) of een symlink als slot: meteen een fout, geen eindeloze lus.
+        naam = self.met_antwoord()
+        slot = debat.RUNS / naam / ".slot"
+        slot.unlink()  # het gewone slotbestand van de vorige beurt
+        (slot / "vol").mkdir(parents=True)
+        os.utime(slot, (0, 0))
+        begin = time.monotonic()
+        with self.assertRaises(ValueError):
+            ronde.voeg_toe(ronde.run_pad(naam), "claude", "verwerking", "x")
+        self.assertLess(time.monotonic() - begin, 2)
+        (slot / "vol").rmdir()
+        slot.rmdir()
+        try:
+            os.symlink(Path(self.tmp.name) / "elders", slot)
+        except (OSError, NotImplementedError):
+            return
+        with self.assertRaises(ValueError):
+            ronde.voeg_toe(ronde.run_pad(naam), "claude", "verwerking", "x")
+        self.assertFalse((Path(self.tmp.name) / "elders").exists())
+
+    def test_een_uitkomst_per_ronde(self):
+        # D11: een tweede CONTROLE of FOUT wordt geweigerd; een verwerking pas na een uitkomst.
+        pad = ronde.run_pad(ronde.nieuw("t", "x"))
+        with self.assertRaises(ValueError):
+            ronde.voeg_toe(pad, "claude", "verwerking", "te vroeg")
+        ronde.voeg_toe(pad, "codex", "controle", "antwoord")
+        for soort in ("controle", "fout"):
+            with self.assertRaises(ValueError):
+                ronde.voeg_toe(pad, "codex", soort, "nog een")
+        ronde.voeg_toe(pad, "claude", "verwerking", "verwerkt")
+        self.assertEqual([b["soort"] for b in self.board(pad.name)], ["opdracht", "controle", "verwerking"])
 
     def test_opdrachtregel_zoals_codex_sh(self):
         uit = io.StringIO()
@@ -147,26 +236,45 @@ class Rondes(unittest.TestCase):
             web.RUNS = oud
 
 
+VAST = re.compile(r"""\.innerHTML\s*=(?!=)\s*(['"])(?:(?!\1)[^`$\\])*\1\s*;""")
+VERBODEN = ("outerHTML", "insertAdjacentHTML", "document.write", "createContextualFragment", "DOMParser",
+            "srcdoc", "parseHTMLUnsafe", "setHTMLUnsafe")
+
+
+def html_fouten(tekst: str) -> list:
+    """Alle plekken waar HTML uit een variabele de pagina in kan: innerHTML met iets anders dan een vaste tekst
+    (ook +=), en elke andere manier om HTML in te voegen."""
+    fouten = []
+    for m in re.finditer(r"innerHTML", tekst):
+        if not VAST.match(tekst, m.start() - 1):
+            fouten.append(f"regel {tekst.count(chr(10), 0, m.start()) + 1}: innerHTML zonder vaste tekst")
+    for woord in VERBODEN:
+        if woord in tekst:
+            fouten.append(f"{woord} is niet toegestaan")
+    return fouten
+
+
 class PaginaGrendel(unittest.TestCase):
-    """Tekst uit runs (titels, sprekers, bestandsnamen uit een diff) komt als tekst op de pagina, nooit als HTML.
-    Daarom mag innerHTML alleen een vaste tekst krijgen: geen variabele, geen ${...}, geen samenvoeging (D01, D07)."""
+    """Tekst uit runs (titels, sprekers, bestandsnamen uit een diff, antwoorden) komt als tekst op de pagina, nooit
+    als HTML. innerHTML mag alleen een vaste tekst krijgen; andere HTML-invoegingen zijn verboden (D01, D07, D12)."""
 
-    VAST = re.compile(r"""\s*(['"])(?:(?!\1)[^`$\\])*\1\s*;""")
-
-    def test_innerhtml_alleen_vaste_tekst(self):
+    def test_pagina_heeft_geen_html_uit_variabelen(self):
         pagina = (Path(__file__).parent / "pagina.html").read_text(encoding="utf-8")
-        treffers = list(re.finditer(r"\.innerHTML\s*=", pagina))
-        self.assertTrue(treffers)
-        for m in treffers:
-            rest = pagina[m.end():]
-            regel = pagina.count("\n", 0, m.start()) + 1
-            self.assertTrue(self.VAST.match(rest), f"pagina.html:{regel}: innerHTML krijgt geen vaste tekst")
+        self.assertIn("innerHTML", pagina)
+        self.assertEqual(html_fouten(pagina), [])
 
-    def test_grendel_vangt_bestandsnamen_via_innerhtml(self):
-        fout = 'regel.innerHTML = [stuk("toegevoegd", f.toegevoegd)].join(" ");'
-        self.assertFalse(self.VAST.match(fout.split("=", 1)[1]))
-        self.assertFalse(self.VAST.match(" `<b>${naam}</b>`;"))
-        self.assertTrue(self.VAST.match(" '<div style=\"a;b\">Nog geen runs.</div>'; return;"))
+    def test_grendel_vangt_elke_omweg(self):
+        for fout in ('regel.innerHTML = [stuk("toegevoegd", f.toegevoegd)].join(" ");',
+                     'regel.innerHTML += f.toegevoegd.join(", ");',
+                     "el.innerHTML = `<b>${naam}</b>`;",
+                     "el.innerHTML = '<b>' + naam + '</b>';",
+                     "el.innerHTML\n  = naam;",
+                     "el.outerHTML = naam;",
+                     'el.insertAdjacentHTML("beforeend", naam);',
+                     "document.write(naam);"):
+            self.assertTrue(html_fouten(fout), fout)
+        self.assertEqual(html_fouten("""x.innerHTML = '<div style="a;b">Nog geen runs.</div>'; return;"""), [])
+        self.assertEqual(html_fouten('x.innerHTML = "";'), [])
 
 
 if __name__ == "__main__":

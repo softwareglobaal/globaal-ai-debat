@@ -155,7 +155,11 @@ Meld aan de gebruiker welke modellen werken, en waar de app staat.
   als run in `runs/` en dus in het dashboard. Werkafspraken: Prive met Claude, "Werkafspraken
   Claude en Codex", hoogste versie.
 - **`innerHTML` krijgt alleen vaste tekst.** Alles uit een run (titels, sprekers,
-  bestandsnamen uit een diff, antwoorden) gaat via `textContent`. `test_ronde.py` bewaakt het.
+  bestandsnamen uit een diff, antwoorden) gaat via `textContent`; `+=`, `outerHTML`,
+  `insertAdjacentHTML` en `document.write` zijn verboden. `test_ronde.py` bewaakt het.
+- **Een ronde heeft precies een uitkomst** (CONTROLE of FOUT) en een slot van het
+  besturingssysteem per ronde (`flock`, op Windows `msvcrt`). Geen eigen verlooptijd terugzetten:
+  dat liet een tweede schrijver het slot afpakken (Codex-controle 2, D08).
 - **Draai dit lokaal.** De logins staan op deze machine. Niet op een server zetten
   zonder dat de gebruiker daar bewust voor kiest; dan moeten de logins daar opnieuw en
   deelt die server de abonnementen.
@@ -191,7 +195,7 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | `test_grendels.py` | veiligheidsgrendels, zonder abonnement of netwerk; ook in CI |
 | `ronde.py` | een ronde tussen Claude en Codex als run wegschrijven (alleen standaardbibliotheek) |
 | `codex.sh` | de vaste aanroep van Codex door Claude (`codex exec`), schrijft elke ronde in het dashboard |
-| `test_ronde.py` | rondes, padcontrole, gelijktijdigheid en de `innerHTML`-grendel; ook in CI |
+| `test_ronde.py` | rondes, padcontrole, slot (gelijktijdig, traag, gecrasht), een uitkomst, HTML-grendel; ook in CI |
 | `test_codex_sh.py` | `codex.sh` met een nep-Codex: invoer, foutcodes, onderbreken; macOS en Linux in CI |
 | `docs/codex/` | opdracht, antwoord en verwerking van de Codex-rondes over deze repo |
 | `start.command` | macOS: dubbelklik in Finder |

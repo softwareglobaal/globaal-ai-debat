@@ -30,14 +30,42 @@ case "$1" in
     uit=""
     while [ $# -gt 0 ]; do [ "$1" = "-o" ] && uit="$2"; shift; done
     cat > /dev/null
-    [ -n "${STUB_SLAAP:-}" ] && sleep "$STUB_SLAAP"
-    [ -n "${STUB_FAAL:-}" ] && { echo "stub faalt" >&2; exit 1; }
+    [ -n "${STUB_GEROEPEN:-}" ] && touch "$STUB_GEROEPEN"
+    if [ -n "${STUB_SLAAP:-}" ]; then
+      sleep "$STUB_SLAAP" &
+      echo "$$ $!" > "$STUB_PIDS"
+      wait $!
+    fi
     [ -n "${STUB_WIS:-}" ] && rm -rf "$STUB_WIS"/*
+    [ -n "${STUB_FAAL:-}" ] && { echo "stub faalt" >&2; exit 1; }
     printf '**Klaar.**\n\n1. niets gevonden\n' > "$uit"
     exit 0 ;;
 esac
 exit 1
 """
+
+# Python voor ronde.py, maar na de gekozen stap ("nieuw" of "controle") blijft hij hangen; zo valt een signaal
+# precies tijdens het aanmaken van de ronde of het wegschrijven van het antwoord.
+TRAAG_PY = r"""#!/bin/bash
+"$ECHTE_PY" "$@"
+rc=$?
+case " $* " in
+  *" $TRAAG_BIJ "*) touch "$TRAAG_TEKEN"; sleep 3 ;;
+esac
+exit $rc
+"""
+
+
+def leeft(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # Een zombie (gestopt maar nog niet opgehaald) telt niet als levend.
+    uit = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(uit) and not uit.startswith("Z")
 
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "codex.sh is een bash-script")
@@ -52,8 +80,16 @@ class CodexSh(unittest.TestCase):
         self.werk = t / "werk"
         self.werk.mkdir()
         self.rapport = t / "uit" / "codex-1-proef.md"
+        self.pids = t / "pids"
+        self.geroepen = t / "geroepen"
+        self.teken = t / "teken"
+        self.traag = t / "traag-python"
+        self.traag.write_text(TRAAG_PY, encoding="utf-8")
+        self.traag.chmod(0o755)
         self.env = {**os.environ, "CODEX_BIN": str(self.stub), "AI_DEBAT": str(HIER),
-                    "CODEX_SH_PY": sys.executable, "CODEX_SH_RUNS": str(self.runs), "CODEX_HOME": str(t)}
+                    "CODEX_SH_PY": sys.executable, "CODEX_SH_RUNS": str(self.runs), "CODEX_HOME": str(t),
+                    "STUB_PIDS": str(self.pids), "STUB_GEROEPEN": str(self.geroepen),
+                    "ECHTE_PY": sys.executable, "TRAAG_TEKEN": str(self.teken)}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -100,25 +136,66 @@ class CodexSh(unittest.TestCase):
         self.assertIn("Klaar", r.stdout)
         self.assertIn("NIET in het dashboard", r.stderr)
 
-    def test_onderbreken_markeert_fout(self):
-        # D05: vroeger bleef alleen de opdracht staan.
+    def start(self, **extra):
         p = subprocess.Popen([str(SCRIPT), "-C", str(self.werk), "-o", str(self.rapport), "-t", "proef"],
-                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                             env={**self.env, "STUB_SLAAP": "30"}, start_new_session=True)
+                             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True,
+                             env={**self.env, **extra}, start_new_session=True)
         p.stdin.write("Lees na.")
         p.stdin.close()
-        ronde = self.rapport.parent / (self.rapport.name + ".ronde")
-        einde = time.monotonic() + 20
-        while not ronde.exists() and time.monotonic() < einde:
-            time.sleep(0.1)
-        time.sleep(0.5)
+        self.addCleanup(lambda: p.poll() is None and os.killpg(p.pid, signal.SIGKILL))
+        return p
+
+    def wacht_op(self, pad, s=20):
+        einde = time.monotonic() + s
+        while not pad.exists():
+            self.assertLess(time.monotonic(), einde, f"{pad} kwam er niet")
+            time.sleep(0.05)
+
+    def test_onderbreken_markeert_fout(self):
+        # D05: vroeger bleef alleen de opdracht staan. Hier krijgt de hele procesgroep van het script het signaal.
+        p = self.start(STUB_SLAAP="30")
+        self.wacht_op(self.pids)
         os.killpg(p.pid, signal.SIGTERM)
         self.assertEqual(p.wait(timeout=20), 130)
-        p.stdout.close()
-        p.stderr.close()
         beurten = self.soorten()
         self.assertEqual([b["soort"] for b in beurten], ["opdracht", "fout"])
         self.assertIn("Onderbroken", beurten[1]["tekst"])
+
+    def test_signaal_aan_script_stopt_codex_en_kinderen(self):
+        # D10: alleen het script krijgt het signaal; de val moet Codex en wat Codex startte zelf stoppen.
+        p = self.start(STUB_SLAAP="30")
+        self.wacht_op(self.pids)
+        codex_pids = [int(x) for x in self.pids.read_text().split()]
+        os.kill(p.pid, signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=10), 130)
+        einde = time.monotonic() + 5
+        while any(leeft(x) for x in codex_pids) and time.monotonic() < einde:
+            time.sleep(0.1)
+        self.assertFalse([x for x in codex_pids if leeft(x)], "Codex of zijn kind draait nog")
+        self.assertEqual([b["soort"] for b in self.soorten()], ["opdracht", "fout"])
+
+    def test_signaal_tijdens_aanmaken_ronde(self):
+        # D10: het signaal valt terwijl de ronde wordt aangemaakt, voor codex.sh haar naam kent.
+        p = self.start(CODEX_SH_PY=str(self.traag), TRAAG_BIJ="nieuw")
+        self.wacht_op(self.teken)
+        os.kill(p.pid, signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=15), 130)
+        self.assertEqual([b["soort"] for b in self.soorten()], ["opdracht", "fout"])
+        self.assertFalse(self.geroepen.exists(), "Codex werd toch nog gestart")
+
+    def test_signaal_na_antwoord_geen_tweede_uitkomst(self):
+        # D11: het signaal valt net nadat het antwoord is weggeschreven; er mag geen FOUT bij komen.
+        p = self.start(CODEX_SH_PY=str(self.traag), TRAAG_BIJ="controle")
+        self.wacht_op(self.teken)
+        os.kill(p.pid, signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=15), 130)
+        self.assertEqual([b["soort"] for b in self.soorten()], ["opdracht", "controle"])
+
+    def test_codex_faalt_en_dashboard_faalt_geeft_code_3(self):
+        # D11: ook de fouttak kijkt na of haar beurt in het dashboard kwam.
+        r = self.gewoon(STUB_FAAL="1", STUB_WIS=str(self.runs))
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("ook de fout staat NIET in het dashboard", r.stderr)
 
     def test_zonder_ronde_py_weigert(self):
         r = self.gewoon(AI_DEBAT=str(Path(self.tmp.name) / "bestaat-niet"))

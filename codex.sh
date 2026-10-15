@@ -1,5 +1,5 @@
 #!/bin/bash
-# codex.sh v1.2 (15-10-2026) - de vaste manier waarop Claude Codex aanroept: `codex exec`.
+# codex.sh v1.3 (15-10-2026) - de vaste manier waarop Claude Codex aanroept: `codex exec`.
 # Elke ronde komt in het dashboard van ai-debat (http://127.0.0.1:8099, links bij de eerdere runs).
 # De MCP-koppeling (`codex mcp-server`) bestaat niet meer sinds Codex 0.15x; niet terugzetten.
 # Bron: repo softwareglobaal/globaal-ai-debat; ~/.claude/tools/codex.sh verwijst hierheen.
@@ -117,23 +117,32 @@ OPDRACHT="$(cat)"; [ -n "$OPDRACHT" ] || fout "opdracht is leeg"
 [ -n "$TITEL" ] || TITEL="Codex-controle: $(basename "$MAP") - $(basename "$RAPPORT" .md)"
 
 START=$SECONDS
-RUN="$(printf '%s\n' "$OPDRACHT" | ronde nieuw --titel "$TITEL" --map "$MAP" --rapport "$RAPPORT" \
-        --model "$MODEL" --niveau "$NIVEAU" --sandbox "$SANDBOX")" || fout "kon de ronde niet in het dashboard zetten"
-printf '%s\n' "$RUN" > "$RAPPORT.ronde"
-
-# Onderbroken (Ctrl-C, kill, sessie gestopt): Codex stoppen en de ronde als fout markeren, niet half laten staan.
-CPID="" AFGESLOTEN=0
+RUN="" GESTART=0
+# Onderbroken (Ctrl-C, kill, sessie gestopt): Codex en zijn kinderen stoppen en de ronde als fout markeren.
+# De val staat er voor de ronde bestaat. ronde.py aanvaardt per ronde maar een uitkomst, dus een signaal na
+# CONTROLE of FOUT geeft nooit een tweede.
 onderbroken() {
   trap - INT TERM HUP
-  [ -n "$CPID" ] && kill "$CPID" 2>/dev/null
-  if [ "$AFGESLOTEN" = 0 ]; then
-    echo "Onderbroken door een signaal na $((SECONDS - START)) s; Codex gaf geen antwoord." \
-      | ronde beurt "$RUN" --kant codex --soort fout --model "$MODEL" --duur "$((SECONDS - START))" >/dev/null 2>&1
+  if [ "$GESTART" = 1 ] && [ -n "${!:-}" ]; then
+    kill -TERM -- "-$!" 2>/dev/null || kill -TERM "$!" 2>/dev/null
   fi
-  echo "codex.sh: onderbroken; ronde $RUN staat als fout in het dashboard" >&2
+  [ -n "$RUN" ] || RUN="$(cat "$RAPPORT.ronde" 2>/dev/null)"
+  if [ -n "$RUN" ]; then
+    echo "Onderbroken door een signaal na $((SECONDS - START)) s." \
+      | ronde beurt "$RUN" --kant codex --soort fout --model "$MODEL" --duur "$((SECONDS - START))" >/dev/null 2>&1
+    echo "codex.sh: onderbroken; ronde $RUN" >&2
+  else
+    echo "codex.sh: onderbroken voor er een ronde was" >&2
+  fi
   exit 130
 }
 trap onderbroken INT TERM HUP
+
+# Een oud rapport mag nooit voor een nieuw antwoord doorgaan.
+rm -f "$RAPPORT" "$RAPPORT.ronde"
+RUN="$(printf '%s\n' "$OPDRACHT" | ronde nieuw --titel "$TITEL" --map "$MAP" --rapport "$RAPPORT" \
+        --model "$MODEL" --niveau "$NIVEAU" --sandbox "$SANDBOX" --naambestand "$RAPPORT.ronde")" \
+  || fout "kon de ronde niet in het dashboard zetten"
 
 ARGS=(exec --ephemeral --skip-git-repo-check -s "$SANDBOX" -C "$MAP" -o "$RAPPORT")
 [ "$METCONFIG" = 1 ] || ARGS+=(--ignore-user-config --disable apps --disable plugins)
@@ -141,27 +150,30 @@ ARGS=(exec --ephemeral --skip-git-repo-check -s "$SANDBOX" -C "$MAP" -o "$RAPPOR
 [ -n "$NIVEAU" ] && ARGS+=(-c "model_reasoning_effort=\"$NIVEAU\"")
 [ $# -gt 0 ] && ARGS+=("$@")
 
-# Op de achtergrond met wait, zodat een signaal meteen de val hierboven bereikt.
-printf '%s\n' "$OPDRACHT" | "$CODEX" "${ARGS[@]}" - > "$RAPPORT.log" 2>&1 &
-CPID=$!
-wait "$CPID"
+# Codex in een eigen procesgroep (setsid) en op de achtergrond met wait: een signaal bereikt meteen de val,
+# en die stopt de hele groep, ook wat Codex zelf startte.
+GESTART=1
+"$PY" -I -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$CODEX" "${ARGS[@]}" - \
+  <<<"$OPDRACHT" > "$RAPPORT.log" 2>&1 &
+wait "$!"
 CODE=$?
-CPID=""
+GESTART=0
 DUUR=$((SECONDS - START))
 if [ $CODE -ne 0 ] || [ ! -s "$RAPPORT" ]; then
-  { echo "Codex stopte met code $CODE. Laatste regels van het log:"; echo; tail -20 "$RAPPORT.log"; } \
-    | ronde beurt "$RUN" --kant codex --soort fout --model "$MODEL" --duur "$DUUR" >/dev/null
-  AFGESLOTEN=1
   echo "codex.sh: Codex stopte met code $CODE; laatste regels van $RAPPORT.log:" >&2
   tail -20 "$RAPPORT.log" >&2
+  if ! { echo "Codex stopte met code $CODE. Laatste regels van het log:"; echo; tail -20 "$RAPPORT.log"; } \
+      | ronde beurt "$RUN" --kant codex --soort fout --model "$MODEL" --duur "$DUUR" >/dev/null; then
+    echo "codex.sh: ook de fout staat NIET in het dashboard (ronde $RUN)" >&2
+    exit 3
+  fi
   exit 1
 fi
 if ! ronde beurt "$RUN" --kant codex --soort controle --model "$MODEL" --duur "$DUUR" < "$RAPPORT" >/dev/null; then
-  AFGESLOTEN=1
   cat "$RAPPORT"
   echo "codex.sh: het antwoord staat in $RAPPORT maar NIET in het dashboard (ronde $RUN)" >&2
   exit 3
 fi
-AFGESLOTEN=1
+trap - INT TERM HUP
 cat "$RAPPORT"
 echo "codex.sh: ronde $RUN staat in het dashboard (http://127.0.0.1:8099)" >&2

@@ -5,15 +5,17 @@ met dit bestand weg als run, zoals een debat of opdracht: runs/<tijdstip>-codex/
 onderwerp.json, board.jsonl en transcript.md. In de interface staat ze links bij de eerdere runs.
 
     python ronde.py nieuw --titel "..." [--map PAD] [--rapport PAD] [--model M] [--niveau N]
-                          [--sandbox S] [--tijd ISO] < opdracht.md        # drukt de rondenaam af
+                          [--sandbox S] [--tijd ISO] [--naambestand PAD] < opdracht.md   # drukt de naam af
     python ronde.py beurt <ronde> --kant codex --soort controle [--model M] [--duur S] < antwoord.md
     python ronde.py beurt <ronde> --kant claude --soort verwerking < verwerkt.md
 
-Een ronde: OPDRACHT (Claude aan Codex), CONTROLE (Codex) of FOUT, en daarna VERWERKING (Claude).
+Een ronde: OPDRACHT (Claude aan Codex), dan precies een uitkomst: CONTROLE (Codex) of FOUT, en daarna
+VERWERKING (Claude). Een tweede uitkomst en een verwerking zonder uitkomst worden geweigerd.
 Alleen standaardbibliotheek.
 """
 
 import argparse
+import errno
 import json
 import math
 import os
@@ -23,6 +25,12 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 
 import debat
 
@@ -34,8 +42,9 @@ SPREKERS = {
 }
 NAAM = re.compile(r"^\d{8}-\d{6}-codex(-\d+)?$")
 BESTANDEN = ("board.jsonl", "onderwerp.json", "transcript.md")
-SLOT_WACHT_S = 10      # zo lang wacht een beurt op een andere beurt van dezelfde ronde
-SLOT_VERLOPEN_S = 60   # een slot dat ouder is, is achtergebleven na een crash
+UITKOMST = ("controle", "fout")   # een ronde krijgt er precies een
+SLOT_WACHT_S = 10                 # zo lang wacht een beurt op een andere beurt van dezelfde ronde
+_NA_LEZEN = None                  # alleen voor tests: aangeroepen binnen het slot, tussen lezen en schrijven
 
 
 def _runs() -> Path:
@@ -63,29 +72,50 @@ def run_pad(naam: str) -> Path:
     return pad
 
 
+def _probeer_slot(fd: int) -> bool:
+    try:
+        if fcntl:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        return True
+    except OSError as e:  # bezet: BlockingIOError (POSIX) of EACCES/EDEADLK (Windows)
+        if isinstance(e, BlockingIOError) or e.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+            return False
+        raise
+
+
+def _laat_slot(fd: int) -> None:
+    if fcntl:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    else:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+
 @contextmanager
 def _slot(pad: Path):
-    """Eén beurt tegelijk per ronde. mkdir is atomisch op elk besturingssysteem."""
+    """Eén beurt tegelijk per ronde, met een slot van het besturingssysteem op .slot. Het komt vrij zodra
+    de houder stopt, ook na een crash, en niemand kan het afpakken zolang de houder leeft. Het bestand blijft
+    staan; weggooien zou zelf een wedloop geven."""
     slot = pad / ".slot"
-    einde = time.monotonic() + SLOT_WACHT_S
-    while True:
-        try:
-            os.mkdir(slot)
-            break
-        except FileExistsError:
-            try:
-                if time.time() - slot.stat().st_mtime > SLOT_VERLOPEN_S:
-                    os.rmdir(slot)
-                    continue
-            except OSError:
-                continue
+    if slot.is_symlink() or (slot.exists() and not slot.is_file()):
+        raise ValueError(f"onverwacht slot, geen gewoon bestand: {slot}")
+    vlaggen = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    fd = os.open(slot, vlaggen, 0o600)
+    try:
+        einde = time.monotonic() + SLOT_WACHT_S
+        while not _probeer_slot(fd):
             if time.monotonic() > einde:
                 raise TimeoutError(f"ronde {pad.name} is bezet")
             time.sleep(0.02)
-    try:
-        yield
+        try:
+            yield
+        finally:
+            _laat_slot(fd)
     finally:
-        os.rmdir(slot)
+        os.close(fd)
 
 
 def _duur(duur):
@@ -115,9 +145,17 @@ def voeg_toe(pad: Path, kant: str, soort: str, tekst: str, model: str = "",
     if not tekst:
         raise ValueError("tekst is leeg")
     duur_s = _duur(duur)
+    _geen_symlinks(pad)
     with _slot(pad):
         _geen_symlinks(pad)
         beurten = _beurten(pad)
+        uitkomst = [b["soort"] for b in beurten if b.get("soort") in UITKOMST]
+        if soort in UITKOMST and uitkomst:
+            raise ValueError(f"ronde {pad.name} heeft al een uitkomst ({uitkomst[0]})")
+        if soort == "verwerking" and not uitkomst:
+            raise ValueError(f"ronde {pad.name} heeft nog geen antwoord of fout van Codex")
+        if _NA_LEZEN:
+            _NA_LEZEN()
         beurt = {
             "nr": len(beurten) + 1,
             "spreker": SPREKERS[(kant, soort)],
@@ -135,8 +173,9 @@ def voeg_toe(pad: Path, kant: str, soort: str, tekst: str, model: str = "",
     return beurt
 
 
-def nieuw(titel: str, opdracht: str, tijd=None, **gegevens) -> str:
-    """Maakt de ronde met de opdracht als eerste beurt en geeft de naam terug."""
+def nieuw(titel: str, opdracht: str, tijd=None, naambestand=None, **gegevens) -> str:
+    """Maakt de ronde met de opdracht als eerste beurt en geeft de naam terug. Met naambestand staat
+    de naam ook meteen op schijf, zodat codex.sh hem vindt als het onderbroken wordt voor het hem las."""
     titel = " ".join((titel or "").split())
     if not titel:
         raise ValueError("titel is leeg")
@@ -159,6 +198,8 @@ def nieuw(titel: str, opdracht: str, tijd=None, **gegevens) -> str:
     (pad / "onderwerp.json").write_text(json.dumps(onderwerp, ensure_ascii=False, indent=2),
                                         encoding="utf-8")
     (pad / "board.jsonl").write_text("", encoding="utf-8")
+    if naambestand:
+        Path(naambestand).write_text(naam + "\n", encoding="utf-8")
     voeg_toe(pad, "claude", "opdracht", opdracht, model="Claude Code", tijd=moment.isoformat())
     return naam
 
@@ -170,7 +211,7 @@ def main(argv=None) -> int:
 
     n = sub.add_parser("nieuw")
     n.add_argument("--titel", required=True)
-    for veld in ("map", "rapport", "model", "niveau", "sandbox", "tijd"):
+    for veld in ("map", "rapport", "model", "niveau", "sandbox", "tijd", "naambestand"):
         n.add_argument(f"--{veld}", default="")
 
     b = sub.add_parser("beurt")
@@ -188,7 +229,8 @@ def main(argv=None) -> int:
     try:
         if a.actie == "nieuw":
             print(nieuw(a.titel, tekst, tijd=a.tijd or None, project=a.map, rapport=a.rapport,
-                        codex_model=a.model, niveau=a.niveau, sandbox=a.sandbox))
+                        codex_model=a.model, niveau=a.niveau, sandbox=a.sandbox,
+                        naambestand=a.naambestand or None))
         else:
             voeg_toe(run_pad(a.ronde), a.kant, a.soort, tekst, model=a.model,
                      duur=a.duur, tijd=a.tijd or None)
