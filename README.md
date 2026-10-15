@@ -65,6 +65,25 @@ Per run komt er een map in `runs/<tijdstip>/`:
 - `onderwerp.json` - kopie van het gebruikte onderwerp
 - `injectie.txt` - zie hieronder
 
+## Rondes tussen Claude en Codex
+
+Claude roept Codex ook buiten deze interface aan, met `codex.sh` (`codex exec`, standaard alleen
+lezen en zonder MCP-servers). Elke aanroep wordt een run in `runs/<tijdstip>-codex/` en staat
+links bij de eerdere runs met het label "Codex-ronde". Een ronde heeft deze beurten:
+
+1. OPDRACHT (Claude aan Codex)
+2. CONTROLE (Codex), of FOUT als Codex faalde of onderbroken werd
+3. VERWERKING (Claude): per bevinding het oordeel, het herstel en de test
+
+```
+codex.sh -C <map> -o <rapport.md> -t "<titel>" < opdracht.md
+codex.sh --verwerking <rapport.md> < verwerkt.md
+codex.sh --zelftest
+```
+
+`ronde.py` schrijft de runs weg in hetzelfde formaat als een debat. Zo staat al het werk van
+Claude en Codex samen op één plek.
+
 ## Opdrachtmodus: uitvoerder en reviewer
 
 Naast het debat kan de app echt werk laten doen. Kies Opdracht in de zijbalk, wijs een

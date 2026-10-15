@@ -373,7 +373,11 @@ async function laadGeschiedenis() {
   if (!runs.length) { doel.innerHTML = '<div class="meta" style="color:var(--zacht);font-size:12px">Nog geen runs.</div>'; return; }
   runs.forEach((r) => {
     const b = document.createElement("button");
-    b.innerHTML = `${r.vraag.slice(0, 70)}<div class="meta">${r.naam} &middot; ${r.beurten} beurten</div>`;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${r.modus === "ronde" ? "Codex-ronde · " : ""}${r.naam} · ${r.beurten} beurten`;
+    b.textContent = r.vraag.slice(0, 70);
+    b.appendChild(meta);
     b.onclick = () => openRun(r.naam);
     doel.appendChild(b);
   });
@@ -397,19 +401,34 @@ function maakBeurt(b) {
   const el = document.createElement("div");
   const breed = b.soort ? " breed" : "";
   el.className = "beurt " + (b.kant === "mens" ? "mens" : b.kant) + breed;
-  const model = b.kant === "mens" ? "" : ` <span class="grijs">${b.model} &middot; ${b.duur_s}s</span>`;
-  el.innerHTML = `<div class="etiket">${b.spreker}${model}</div><div class="bel"></div>`;
-  const bel = el.querySelector(".bel");
+  const etiket = document.createElement("div");
+  etiket.className = "etiket";
+  etiket.textContent = b.spreker;
+  if (b.kant !== "mens") {
+    const grijs = document.createElement("span");
+    grijs.className = "grijs";
+    grijs.textContent = " " + [b.model, b.duur_s != null ? `${b.duur_s}s` : ""].filter(Boolean).join(" · ");
+    etiket.appendChild(grijs);
+  }
+  const bel = document.createElement("div");
+  bel.className = "bel";
+  el.append(etiket, bel);
   bel.textContent = b.tekst;
 
   if (b.bestanden) {
     const f = b.bestanden;
     const regel = document.createElement("div");
     regel.className = "bestanden";
-    const stuk = (naam, lijst) => (lijst.length ? `<b>${naam}:</b> ${lijst.join(", ")}` : "");
-    regel.innerHTML = [stuk("toegevoegd", f.toegevoegd), stuk("gewijzigd", f.gewijzigd),
-                       stuk("verwijderd", f.verwijderd)].filter(Boolean).join(" &nbsp; ")
-                       || "geen bestanden gewijzigd";
+    // Bestandsnamen komen uit de diff: altijd als tekst, nooit als HTML.
+    [["toegevoegd", f.toegevoegd], ["gewijzigd", f.gewijzigd], ["verwijderd", f.verwijderd]]
+      .filter(([, lijst]) => lijst.length)
+      .forEach(([naam, lijst]) => {
+        if (regel.childNodes.length) regel.append("  ");
+        const vet = document.createElement("b");
+        vet.textContent = naam + ":";
+        regel.append(vet, " " + lijst.join(", "));
+      });
+    if (!regel.childNodes.length) regel.textContent = "geen bestanden gewijzigd";
     bel.appendChild(regel);
   }
   if (b.diff && b.diff.trim()) {
@@ -440,7 +459,12 @@ function toonBezig(naam) {
   const el = document.createElement("div");
   el.id = "bezig";
   el.className = "bezig";
-  el.innerHTML = `<span class="punt"></span><span class="punt"></span><span class="punt"></span> ${naam} is aan het schrijven`;
+  for (let i = 0; i < 3; i++) {
+    const punt = document.createElement("span");
+    punt.className = "punt";
+    el.appendChild(punt);
+  }
+  el.append(` ${naam} is aan het schrijven`);
   $("stroom").appendChild(el);
 }
 

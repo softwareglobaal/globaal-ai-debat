@@ -464,10 +464,12 @@ def api_runs():
         try:
             onderwerp = json.loads((pad / "onderwerp.json").read_text(encoding="utf-8"))
             vraag = onderwerp["vraag"]
+            modus = onderwerp.get("modus", "")
         except (OSError, json.JSONDecodeError, KeyError):
-            vraag = "(onbekend onderwerp)"
-        aantal = sum(1 for _ in board.open(encoding="utf-8"))
-        lijst.append({"naam": pad.name, "vraag": vraag, "beurten": aantal})
+            vraag, modus = "(onbekend onderwerp)", ""
+        with board.open(encoding="utf-8") as f:
+            aantal = sum(1 for _ in f)
+        lijst.append({"naam": pad.name, "vraag": vraag, "beurten": aantal, "modus": modus})
     return jsonify(lijst)
 
 
@@ -476,7 +478,8 @@ def api_run(naam):
     pad = (RUNS / naam).resolve()
     if pad.parent != RUNS.resolve() or not pad.is_dir():
         return jsonify({"fout": "niet gevonden"}), 404
-    beurten = [json.loads(r) for r in (pad / "board.jsonl").open(encoding="utf-8") if r.strip()]
+    with (pad / "board.jsonl").open(encoding="utf-8") as f:
+        beurten = [json.loads(r) for r in f if r.strip()]
     onderwerp = json.loads((pad / "onderwerp.json").read_text(encoding="utf-8"))
     return jsonify({"naam": naam, "onderwerp": onderwerp, "beurten": beurten})
 

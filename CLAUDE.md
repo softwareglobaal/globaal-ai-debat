@@ -148,8 +148,14 @@ Meld aan de gebruiker welke modellen werken, en waar de app staat.
   Nooit versoepelen; `test_grendels.py` bewaakt het.
 - **De uitvoerder draait met `acceptEdits`, nooit met `bypassPermissions`.** Dan kan hij
   alleen in zijn worktree schrijven. Bash wordt apart toegestaan via het vinkje.
-- **Na elke wijziging:** `python -m unittest test_grendels -v`. Moet groen zijn voor je
-  commit; de CI draait hetzelfde.
+- **Na elke wijziging:** `python -m unittest test_grendels test_ronde test_codex_sh -v`. Moet
+  groen zijn voor je commit; de CI draait hetzelfde.
+- **Codex-rondes lopen via `codex.sh`.** Claude roept Codex buiten de interface aan met
+  `~/.claude/tools/codex.sh` (een symlink naar `codex.sh` hier). Elke ronde komt via `ronde.py`
+  als run in `runs/` en dus in het dashboard. Werkafspraken: Prive met Claude, "Werkafspraken
+  Claude en Codex", hoogste versie.
+- **`innerHTML` krijgt alleen vaste tekst.** Alles uit een run (titels, sprekers,
+  bestandsnamen uit een diff, antwoorden) gaat via `textContent`. `test_ronde.py` bewaakt het.
 - **Draai dit lokaal.** De logins staan op deze machine. Niet op een server zetten
   zonder dat de gebruiker daar bewust voor kiest; dan moeten de logins daar opnieuw en
   deelt die server de abonnementen.
@@ -183,6 +189,11 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | `controleer_modellen.py` | vaststellen welke modellen op deze machine werken |
 | `test_kant.py` | rooktest per kant |
 | `test_grendels.py` | veiligheidsgrendels, zonder abonnement of netwerk; ook in CI |
+| `ronde.py` | een ronde tussen Claude en Codex als run wegschrijven (alleen standaardbibliotheek) |
+| `codex.sh` | de vaste aanroep van Codex door Claude (`codex exec`), schrijft elke ronde in het dashboard |
+| `test_ronde.py` | rondes, padcontrole, gelijktijdigheid en de `innerHTML`-grendel; ook in CI |
+| `test_codex_sh.py` | `codex.sh` met een nep-Codex: invoer, foutcodes, onderbreken; macOS en Linux in CI |
+| `docs/codex/` | opdracht, antwoord en verwerking van de Codex-rondes over deze repo |
 | `start.command` | macOS: dubbelklik in Finder |
 | `modellen.standaard.json` | veilige lijst tot `controleer_modellen.py` heeft gedraaid |
 | `onderwerpen/voorbeeld-*.json` | voorbeeldonderwerpen; eigen onderwerpen blijven buiten git |

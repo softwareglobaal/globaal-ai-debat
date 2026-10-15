@@ -14,3 +14,7 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# Codex-rondes: log en rondenaam zijn per machine; opdracht, antwoord en verwerking gaan wel mee.
+docs/codex/*.log
+docs/codex/*.ronde
