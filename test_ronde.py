@@ -41,6 +41,7 @@ class Rondes(unittest.TestCase):
     def test_volledige_ronde(self):
         naam = ronde.nieuw("Codex-controle: proef", "Lees x.py na.", project="/tmp/p", rapport="", sandbox="read-only")
         self.assertRegex(naam, ronde.NAAM)
+        self.assertIn(f"Gestart: {naam}", (debat.RUNS / naam / "transcript.md").read_text(encoding="utf-8"))
         ronde.voeg_toe(ronde.run_pad(naam), "codex", "controle", "**Niet klaar.** 1. Hoog", model="gpt", duur=12)
         ronde.voeg_toe(ronde.run_pad(naam), "claude", "verwerking", "1. gelijk, hersteld in abc123")
         beurten = self.board(naam)
@@ -148,11 +149,13 @@ class Rondes(unittest.TestCase):
             "ronde._NA_LEZEN = haak\nronde.voeg_toe(p, 'claude', 'verwerking', 'traag')\n",
             naam, str(binnen), str(los))
         self.wacht_op(binnen)
+        geweigerd = threading.Event()
+        ronde._NA_MISLUKTE_POGING = geweigerd.set
+        self.addCleanup(setattr, ronde, "_NA_MISLUKTE_POGING", None)
         tweede = threading.Thread(target=ronde.voeg_toe,
                                   args=(ronde.run_pad(naam), "claude", "verwerking", "snel"))
         tweede.start()
-        tweede.join(1.0)
-        wachtte = tweede.is_alive()
+        wachtte = geweigerd.wait(20)  # D22: het slot moet de tweede schrijver echt geweigerd hebben
         los.touch()
         tweede.join(30)
         self.assertEqual(houder.wait(timeout=30), 0)
@@ -184,19 +187,97 @@ class Rondes(unittest.TestCase):
                 else:
                     p.send_signal(stop)
                 p.wait(timeout=10)
-                zichtbaar = [d for d in debat.RUNS.iterdir() if d.is_dir() and not d.name.startswith(".")]
+                zichtbaar = [d for d in debat.RUNS.iterdir() if (d / "board.jsonl").exists()]
                 for d in zichtbaar:
+                    self.assertIn(f"Gestart: {d.name}", (d / "transcript.md").read_text(encoding="utf-8"))
                     beurten = [json.loads(r) for r in (d / "board.jsonl").read_text(encoding="utf-8").splitlines()
                                if r.strip()]
                     self.assertTrue(beurten and beurten[0]["soort"] == "opdracht", f"halve ronde {d.name}")
                 if naambestand.exists():
                     naam = naambestand.read_text(encoding="utf-8").strip()
-                    if (debat.RUNS / naam).exists():
+                    if (debat.RUNS / naam / "board.jsonl").exists():
                         self.assertEqual(self.board(naam)[0]["soort"], "opdracht")
                     else:
-                        # De val van codex.sh kent de naam, maar de ronde bestaat niet: een FOUT maakt niets aan.
+                        # De val van codex.sh kent de naam, maar de ronde is niet zichtbaar: een FOUT maakt niets aan.
                         with self.assertRaises(FileNotFoundError):
                             ronde.run_pad(naam)
+
+    def test_naam_alleen_van_eigen_ronde(self):
+        # D17: tien aanroepen in dezelfde seconde: elk naambestand noemt de eigen ronde, met de eigen opdracht.
+        procs = []
+        for k in range(10):
+            procs.append(subprocess.Popen(
+                [sys.executable, "-c",
+                 "import sys, debat, ronde\nfrom pathlib import Path\ndebat.RUNS = Path(sys.argv[1])\n"
+                 "ronde.nieuw('t', 'opdracht ' + sys.argv[2], tijd='2026-10-15T19:00:00', naambestand=sys.argv[3])\n",
+                 str(debat.RUNS), str(k), str(Path(self.tmp.name) / f"naam-{k}")], cwd=Path(__file__).parent))
+        for p in procs:
+            self.assertEqual(p.wait(timeout=60), 0)
+        namen = set()
+        for k in range(10):
+            naam = (Path(self.tmp.name) / f"naam-{k}").read_text(encoding="utf-8").strip()
+            namen.add(naam)
+            self.assertEqual(self.board(naam)[0]["tekst"], f"opdracht {k}")
+        self.assertEqual(len(namen), 10)
+
+    def test_lege_map_van_ander_proces_wordt_niet_vervangen(self):
+        # D17: een map met dezelfde naam, ook leeg, is van een ander; nieuw() kiest een andere naam.
+        debat.RUNS.mkdir(parents=True, exist_ok=True)
+        (debat.RUNS / "20261015-190000-codex").mkdir()
+        naam = ronde.nieuw("t", "x", tijd="2026-10-15T19:00:00")
+        self.assertEqual(naam, "20261015-190000-codex-2")
+        self.assertEqual(list((debat.RUNS / "20261015-190000-codex").iterdir()), [])
+
+    def test_resten_zichtbaar_en_op_te_ruimen(self):
+        # D20: een harde stop tijdens nieuw() laat een rondemap zonder board.jsonl achter; resten() toont die,
+        # --weg ruimt alleen die op, nooit een volledige ronde of iets jongs.
+        heel = ronde.nieuw("t", "x")
+        rest = debat.RUNS / "20261015-010000-codex"
+        rest.mkdir()
+        (rest / "onderwerp.json").write_text("{}", encoding="utf-8")
+        oud = debat.RUNS / ".nieuw-abc"
+        oud.mkdir()
+        jong = debat.RUNS / "20261015-020000-codex"
+        jong.mkdir()
+        for d in (rest, oud):
+            os.utime(d, (time.time() - 3600, time.time() - 3600))
+        self.assertEqual(ronde.resten(), sorted([rest, oud]))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(ronde.main(["--runs", str(debat.RUNS), "resten", "--weg"]), 0)
+        self.assertFalse(rest.exists() or oud.exists())
+        self.assertTrue(jong.exists() and (debat.RUNS / heel / "board.jsonl").exists())
+
+    def test_slot_vervangen_tussen_controle_en_openen(self):
+        # D21: een ander proces vervangt .slot door een symlink net na de controle. De volledige slotroute moet
+        # weigeren: op POSIX door O_NOFOLLOW, op Windows door de identiteitscontrole; nooit een slot of schrijven
+        # op het bestand erachter.
+        naam = self.met_antwoord()
+        slot = debat.RUNS / naam / ".slot"
+        buiten = Path(self.tmp.name) / "buiten-slot"
+        buiten.write_text("onaangeroerd", encoding="utf-8")
+        echt_open = os.open
+        gewisseld = []
+
+        def open_met_wissel(pad, *args, **kw):
+            if str(pad) == str(slot) and not gewisseld:
+                gewisseld.append(True)
+                slot.unlink()
+                os.symlink(buiten, slot)
+            return echt_open(pad, *args, **kw)
+
+        try:
+            os.symlink(buiten, Path(self.tmp.name) / "proef-symlink")
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks niet toegestaan op dit systeem")
+        ronde.os.open = open_met_wissel
+        try:
+            with self.assertRaises(ValueError):
+                ronde.voeg_toe(ronde.run_pad(naam), "claude", "verwerking", "x")
+        finally:
+            ronde.os.open = echt_open
+        self.assertTrue(gewisseld)
+        self.assertEqual(buiten.read_text(encoding="utf-8"), "onaangeroerd")
+        self.assertEqual(len(self.board(naam)), 2)
 
     def test_uitkomst_nooit_als_eerste_beurt(self):
         # D13: ook als een ronde ooit zonder opdracht zou bestaan, wordt FOUT nooit de eerste beurt.

@@ -8,6 +8,7 @@ onderwerp.json, board.jsonl en transcript.md. In de interface staat ze links bij
                           [--sandbox S] [--tijd ISO] [--naambestand PAD] < opdracht.md   # drukt de naam af
     python ronde.py beurt <ronde> --kant codex --soort controle [--model M] [--duur S] < antwoord.md
     python ronde.py beurt <ronde> --kant claude --soort verwerking < verwerkt.md
+    python ronde.py resten [--weg] [--minuten 10]     # onvolledige rondes na een harde stop
 
 Een ronde: OPDRACHT (Claude aan Codex), dan precies een uitkomst: CONTROLE (Codex) of FOUT, en daarna
 VERWERKING (Claude). Een tweede uitkomst en een verwerking zonder uitkomst worden geweigerd.
@@ -23,7 +24,6 @@ import re
 import shutil
 import stat
 import sys
-import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -48,7 +48,9 @@ BESTANDEN = ("board.jsonl", "onderwerp.json", "transcript.md")
 UITKOMST = ("controle", "fout")   # een ronde krijgt er precies een
 SLOT_WACHT_S = 10                 # zo lang wacht een beurt op een andere beurt van dezelfde ronde
 _NA_LEZEN = None                  # alleen voor tests: aangeroepen binnen het slot, tussen lezen en schrijven
-STAPPEN_NIEUW = ("tijdelijk", "naam", "zichtbaar")
+STAPPEN_NIEUW = ("gereserveerd", "naam", "zichtbaar")
+_NA_MISLUKTE_POGING = None        # alleen voor tests: aangeroepen als het slot bezet bleek
+RESTEN_OUDER_DAN_S = 600          # een onvolledige ronde die ouder is, is een rest van een harde stop
 _NA_STAP = None                   # alleen voor tests: aangeroepen na elke stap van nieuw()
 
 
@@ -133,6 +135,8 @@ def _slot(pad: Path):
         _controleer_geopend(fd, slot)
         einde = time.monotonic() + SLOT_WACHT_S
         while not _probeer_slot(fd):
+            if _NA_MISLUKTE_POGING:
+                _NA_MISLUKTE_POGING()
             if time.monotonic() > einde:
                 raise TimeoutError(f"ronde {pad.name} is bezet")
             time.sleep(0.02)
@@ -213,9 +217,11 @@ def _stap(naam: str) -> None:
 def nieuw(titel: str, opdracht: str, tijd=None, naambestand=None, **gegevens) -> str:
     """Maakt de ronde met de opdracht als eerste beurt en geeft de naam terug.
 
-    De ronde wordt volledig opgebouwd in een verborgen map (runs/.nieuw-*) en pas daarna in een stap onder haar
-    naam gezet (rename is atomisch). Een onderbreking laat dus nooit een halve ronde zichtbaar achter. Met
-    naambestand staat de naam op schijf voor de ronde zichtbaar wordt; zo vindt codex.sh hem altijd."""
+    1. De naam wordt gereserveerd met mkdir: atomisch, en het vervangt nooit iets, ook geen lege map van een
+       ander proces. Pas dan komt de naam in het naambestand, dat dus alleen een eigen ronde kan noemen.
+    2. onderwerp.json en transcript.md komen in die map, board.jsonl als laatste via os.replace.
+    Zonder board.jsonl is een ronde onzichtbaar (dashboard, run_pad). Een onderbreking laat dus nooit een halve
+    ronde zien; een harde stop kan een rest zonder board.jsonl achterlaten, die resten() toont."""
     titel = " ".join((titel or "").split())
     if not titel:
         raise ValueError("titel is leeg")
@@ -226,39 +232,48 @@ def nieuw(titel: str, opdracht: str, tijd=None, naambestand=None, **gegevens) ->
     onderwerp = {"vraag": titel, "modus": "ronde", **{k: v for k, v in gegevens.items() if v}}
     runs = _runs()
     runs.mkdir(parents=True, exist_ok=True)
-    tijdelijk = Path(tempfile.mkdtemp(prefix=".nieuw-", dir=runs))
+    basis = moment.strftime("%Y%m%d-%H%M%S") + "-codex"
+    naam, i = basis, 1
+    while True:
+        try:
+            os.mkdir(runs / naam)
+            break
+        except FileExistsError:
+            i += 1
+            naam = f"{basis}-{i}"
+    pad = runs / naam
     try:
-        (tijdelijk / "onderwerp.json").write_text(json.dumps(onderwerp, ensure_ascii=False, indent=2),
-                                                  encoding="utf-8")
-        (tijdelijk / "board.jsonl").write_text(json.dumps(eerste, ensure_ascii=False, allow_nan=False) + "\n",
-                                               encoding="utf-8")
-        debat.schrijf_transcript(tijdelijk, onderwerp, [eerste])
-        _stap("tijdelijk")
-        basis = moment.strftime("%Y%m%d-%H%M%S") + "-codex"
-        naam, i = basis, 1
-        while True:
-            doel = runs / naam
-            if doel.exists() or doel.is_symlink():
-                i += 1
-                naam = f"{basis}-{i}"
-                continue
-            if naambestand:
-                Path(naambestand).write_text(naam + "\n", encoding="utf-8")
-            _stap("naam")
-            try:
-                os.rename(tijdelijk, doel)
-                break
-            except OSError:
-                if not doel.exists():
-                    raise
-                i += 1
-                naam = f"{basis}-{i}"
-        _stap("zichtbaar")
-        return naam
+        _stap("gereserveerd")
+        if naambestand:
+            Path(naambestand).write_text(naam + "\n", encoding="utf-8")
+        _stap("naam")
+        (pad / "onderwerp.json").write_text(json.dumps(onderwerp, ensure_ascii=False, indent=2), encoding="utf-8")
+        debat.schrijf_transcript(pad, onderwerp, [eerste])
+        klaar = pad / ".board.jsonl.nieuw"
+        klaar.write_text(json.dumps(eerste, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
+        os.replace(klaar, pad / "board.jsonl")
     except BaseException:
-        if tijdelijk.exists():
-            shutil.rmtree(tijdelijk, ignore_errors=True)
+        if not (pad / "board.jsonl").exists():
+            shutil.rmtree(pad, ignore_errors=True)
         raise
+    _stap("zichtbaar")
+    return naam
+
+
+def resten(ouder_dan_s: float = RESTEN_OUDER_DAN_S) -> list:
+    """Onvolledige rondes: mappen met een rondenaam maar zonder board.jsonl (een harde stop tijdens nieuw()),
+    en verborgen runs/.nieuw-* van codex.sh v1.4. Alleen wat ouder is dan ouder_dan_s; jonger kan nog in opbouw zijn."""
+    runs = _runs()
+    if not runs.is_dir():
+        return []
+    gevonden = []
+    for d in sorted(runs.iterdir()):
+        if d.is_symlink() or not d.is_dir():
+            continue
+        onvolledig = NAAM.match(d.name) and not (d / "board.jsonl").exists()
+        if (onvolledig or d.name.startswith(".nieuw-")) and time.time() - d.stat().st_mtime > ouder_dan_s:
+            gevonden.append(d)
+    return gevonden
 
 
 def main(argv=None) -> int:
@@ -271,6 +286,10 @@ def main(argv=None) -> int:
     for veld in ("map", "rapport", "model", "niveau", "sandbox", "tijd", "naambestand"):
         n.add_argument(f"--{veld}", default="")
 
+    r = sub.add_parser("resten", help="onvolledige rondes tonen, met --weg ook weghalen")
+    r.add_argument("--weg", action="store_true")
+    r.add_argument("--minuten", type=float, default=RESTEN_OUDER_DAN_S / 60)
+
     b = sub.add_parser("beurt")
     b.add_argument("ronde")
     b.add_argument("--kant", required=True, choices=["claude", "codex"])
@@ -282,6 +301,12 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
     if a.runs:
         debat.RUNS = Path(a.runs)
+    if a.actie == "resten":
+        for d in resten(a.minuten * 60):
+            if a.weg:
+                shutil.rmtree(d)
+            print(("weg: " if a.weg else "") + str(d))
+        return 0
     tekst = sys.stdin.read()
     try:
         if a.actie == "nieuw":

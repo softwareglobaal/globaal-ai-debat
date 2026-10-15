@@ -181,7 +181,7 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | `claude` of `codex` niet gevonden bij start vanuit Finder | `~/.local/bin` en `/opt/homebrew/bin` niet op PATH | `start.sh` zet ze erbij; op macOS starten via `start.command` |
 | accenten worden vreemde tekens in de console | Windows-console is geen UTF-8 | `debat.py` zet stdout op UTF-8; bestanden altijd met `encoding="utf-8"` |
 | Codex draait door na een signaal aan `codex.sh` | python startte via een shellwrapper (pyenv, asdf): `$!` is de wrapper, Codex zit in een andere groep | de starter schrijft na `setsid` zijn pid (= groep) naar een tijdelijk bestand; de val stopt die groep (Codex-controle 3, D14) |
-| halve ronde of FOUT als eerste beurt na een onderbreking | de ronde was zichtbaar voor ze af was | `ronde.nieuw` bouwt in `runs/.nieuw-*` en hernoemt pas als alles er staat; `/api/runs` slaat verborgen mappen over (Codex-controle 3, D13) |
+| halve ronde of FOUT als eerste beurt na een onderbreking | de ronde was zichtbaar voor ze af was | `ronde.nieuw` reserveert de naam met `mkdir` en zet `board.jsonl` er als laatste in met `os.replace`; zonder `board.jsonl` is een ronde onzichtbaar. Resten van een harde stop: `python ronde.py resten [--weg]` (Codex-controles 3 en 4) |
 
 ## Bestanden
 
@@ -197,6 +197,7 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | `test_grendels.py` | veiligheidsgrendels, zonder abonnement of netwerk; ook in CI |
 | `ronde.py` | een ronde tussen Claude en Codex als run wegschrijven (alleen standaardbibliotheek) |
 | `codex.sh` | de vaste aanroep van Codex door Claude (`codex exec`), schrijft elke ronde in het dashboard |
+| `starter.py` | start Codex voor `codex.sh` in een eigen procesgroep, met groepsbestand en stopmerker |
 | `test_ronde.py` | rondes, padcontrole, slot (gelijktijdig, traag, gecrasht), een uitkomst, HTML-grendel; ook in CI |
 | `test_codex_sh.py` | `codex.sh` met een nep-Codex: invoer, foutcodes, onderbreken; macOS en Linux in CI |
 | `docs/codex/` | opdracht, antwoord en verwerking van de Codex-rondes over deze repo |

@@ -84,6 +84,9 @@ codex.sh --zelftest
 `ronde.py` schrijft de runs weg in hetzelfde formaat als een debat. Zo staat al het werk van
 Claude en Codex samen op één plek.
 
+Na een harde stop (kill -9, stroomuitval) kan er een onvolledige rondemap achterblijven. Die
+staat niet in het dashboard; `python ronde.py resten` toont ze, `--weg` ruimt ze op.
+
 ## Opdrachtmodus: uitvoerder en reviewer
 
 Naast het debat kan de app echt werk laten doen. Kies Opdracht in de zijbalk, wijs een

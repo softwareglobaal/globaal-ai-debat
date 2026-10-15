@@ -31,6 +31,7 @@ case "$1" in
     while [ $# -gt 0 ]; do [ "$1" = "-o" ] && uit="$2"; shift; done
     cat > /dev/null
     [ -n "${STUB_GEROEPEN:-}" ] && touch "$STUB_GEROEPEN"
+    [ -n "${STUB_NEGEER_TERM:-}" ] && trap '' TERM
     if [ -n "${STUB_SLAAP:-}" ]; then
       sleep "$STUB_SLAAP" &
       echo "$$ $!" > "$STUB_PIDS"
@@ -186,6 +187,33 @@ class CodexSh(unittest.TestCase):
             time.sleep(0.1)
         self.assertFalse([x for x in codex_pids if leeft(x)], "Codex draait nog na een signaal via de wrapper")
         self.assertEqual([b["soort"] for b in self.soorten()], ["opdracht", "fout"])
+
+    def test_gepauzeerde_starter_start_codex_niet_meer(self):
+        # D18: de starter (python achter een wrapper) hangt nog voor hij zijn groep meldt; de val geeft na twee
+        # seconden op. Daarna mag hij Codex nooit meer starten.
+        p = self.start(STUB_SLAAP="30", CODEX_SH_PY=str(self.traag), TRAAG_BIJ="nooit",
+                       CODEX_SH_TEST_STARTER_PAUZE="4")
+        self.wacht_op(self.rapport.parent / (self.rapport.name + ".ronde"))
+        time.sleep(0.5)
+        os.kill(p.pid, signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=15), 130)
+        time.sleep(6)  # ruim na het einde van de pauze van de starter
+        self.assertFalse(self.geroepen.exists(), "de starter startte Codex na de onderbreking toch nog")
+        self.assertEqual([b["soort"] for b in self.soorten()], ["opdracht", "fout"])
+
+    def test_kind_dat_term_negeert_wordt_alsnog_gestopt(self):
+        # D19: TERM volstaat niet altijd; na drie seconden volgt KILL voor de hele groep.
+        p = self.start(STUB_SLAAP="30", STUB_NEGEER_TERM="1")
+        self.wacht_op(self.pids)
+        codex_pids = [int(x) for x in self.pids.read_text().split()]
+        begin = time.monotonic()
+        os.kill(p.pid, signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=15), 130)
+        einde = time.monotonic() + 5
+        while any(leeft(x) for x in codex_pids) and time.monotonic() < einde:
+            time.sleep(0.1)
+        self.assertFalse([x for x in codex_pids if leeft(x)], "een kind dat TERM negeert, draait nog")
+        self.assertLess(time.monotonic() - begin, 10)
 
     def test_signaal_tijdens_aanmaken_ronde(self):
         # D10: het signaal valt terwijl de ronde wordt aangemaakt, voor codex.sh haar naam kent.
