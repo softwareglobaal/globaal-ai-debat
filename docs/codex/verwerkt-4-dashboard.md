@@ -15,7 +15,7 @@ starter door een eigen bestand met een stopmerker.
 | D23 | laag | gelijk, tijdelijk: zolang een ronde alleen de opdracht had, stond er `Gestart: .nieuw-*`; de volgende beurt zette de echte naam | bestanden meteen in de echte map | test_volledige_ronde (naam meteen na nieuw) en de onderbrekingstest |
 
 Gemeten:
-- 47 tests groen, ook met `-W error::ResourceWarning`; drie keer na elkaar groen.
+- 46 tests groen, ook met `-W error::ResourceWarning`; drie keer na elkaar groen.
 - Mutatiecontrole in een kopie: acht mutaties, alle gevangen.
 - Zelftest van codex.sh v1.5 met de echte Codex geslaagd; `ronde.py resten` vindt niets in de echte `runs/`.
 
