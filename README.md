@@ -6,8 +6,14 @@ Laat Claude en ChatGPT met elkaar praten op de abonnementen, zonder API-keys.
 - ChatGPT-kant: `codex exec` via Codex CLI, draait op het ChatGPT-abonnement.
 - De orkestrator wisselt de beurten af, schrijft alles weg en dwingt de limieten af.
 
-Twee modi: **Debat** (twee modellen verdedigen een tegengestelde positie) en **Opdracht**
-(Claude schrijft code in een git-worktree, ChatGPT reviewt de diff, Claude herziet).
+Twee modi: **Opdracht** (Claude schrijft code in een git-worktree, de app draait jouw tests,
+ChatGPT reviewt de diff, Claude herziet) en **Debat** (twee modellen verdedigen een
+tegengestelde positie, een rechter sluit af met een vonnis). Opdracht is de kern en staat
+standaard aan.
+
+Elke run eindigt in velden, niet in een gesprek: een opdracht in `resultaat.json` (tests,
+rondes, duur, waarom gestopt, jouw oordeel), een debat in `vonnis.json` (besluit, winnaar,
+open punten, volgende stap).
 
 ## Installeren
 
@@ -54,16 +60,32 @@ Belangrijkste vlaggen:
 | `--claude-model` | bijvoorbeeld `sonnet` of `opus`; zie `modellen.json` voor wat hier werkt |
 | `--codex-model` | leeg = standaardmodel van codex; zie `modellen.json` |
 | `--start` | wie het debat opent |
-| `--stop-bij-instemming` | stop zodra er twee beurten achtereen wordt ingestemd |
+| `--stop-bij-instemming` | stop zodra beide kanten achter elkaar `STANDPUNT: EENS` melden |
+| `--geen-vonnis` | geen rechter na afloop |
 
 ## Resultaat
 
 Per run komt er een map in `runs/<tijdstip>/`:
 
-- `board.jsonl` - één regel per beurt met spreker, model, tijdstip, duur en tekst
-- `transcript.md` - leesbaar verslag
+- `board.jsonl` - één regel per beurt met spreker, model, tijdstip, duur, tekst en standpunt of oordeel
+- `transcript.md` - leesbaar verslag, bij een debat met het vonnis onderaan
 - `onderwerp.json` - kopie van het gebruikte onderwerp
+- `vonnis.json` - debat: het vonnis van de rechter in velden
+- `resultaat.json` - opdracht: de feiten van de run plus jouw oordeel
+- `tests-start.txt`, `tests-ronde-<n>.txt` - opdracht: volledige testuitvoer per meting
 - `injectie.txt` - zie hieronder
+
+## Debat: standpunt en vonnis
+
+Elke beurt eindigt met een vaste regel: `STANDPUNT: HANDHAAF`, `BIJGESTELD` of `EENS`. De
+app haalt die regel uit de tekst en toont hem bij de beurt. Melden beide kanten achter
+elkaar `EENS`, dan stopt het debat: verder praten levert dan niets meer op.
+
+Na elk debat dat niet met Nu stoppen is afgebroken, leest een rechter (een aparte
+Claude-aanroep zonder tools) het hele debat en geeft een vonnis in velden: besluit,
+winnaar, doorslaggevend argument, waar ze het over eens werden, open punten en de
+volgende stap. De rechter ziet de kanten alleen als A en B, niet als Claude en ChatGPT.
+Lukt het lezen van zijn antwoord niet, dan staat er een zichtbare fout met de ruwe tekst.
 
 ## Rondes tussen Claude en Codex
 
@@ -92,24 +114,46 @@ staat niet in het dashboard; `python ronde.py resten` toont ze, `--weg` ruimt ze
 Naast het debat kan de app echt werk laten doen. Kies Opdracht in de zijbalk, wijs een
 git-repo aan en beschrijf wat er moet gebeuren.
 
-Wat er dan gebeurt, per ronde:
+Wat er dan gebeurt:
 
+0. Heb je een testcommando opgegeven, dan draait de app dat eerst op de ongewijzigde code.
+   Zo weet je of de tests vooraf al rood of groen waren.
 1. Claude voert de opdracht uit in een verse git-worktree op een eigen tak
    (`ai-opdracht/<tijdstip>`), in `werkplek/`. Je werkende map wordt niet aangeraakt.
 2. De diff wordt vastgelegd, inclusief nieuwe en verwijderde bestanden.
-3. ChatGPT krijgt de opdracht, het verslag en de diff, mag de omliggende code lezen maar
-   niets schrijven, en levert bevindingen.
-4. Claude krijgt die bevindingen als geciteerd materiaal terug en herziet.
+3. De app draait het testcommando opnieuw. Wat de tests aanmaken of wijzigen, wordt daarna
+   teruggezet, zodat het nooit in de diff belandt; wat er is opgeruimd staat bij de uitslag.
+4. ChatGPT krijgt de opdracht, het verslag, de diff en de testuitslag, en levert
+   bevindingen. Hij sluit af met `OORDEEL: AKKOORD` of `OORDEEL: GEBREKEN`.
+5. Claude krijgt bevindingen en testuitslag als geciteerd materiaal terug en herziet.
 
-Zet het aantal rondes op 2 of 3. Na afloop staat het resultaat in de worktree; jij bekijkt
-de diff en beslist zelf of er iets naar je echte tak gaat. De worktree blijft staan.
-Opruimen doe je met `git worktree remove <pad>` vanuit de repo.
+De run stopt zodra de tests groen zijn en de reviewer akkoord is. Zet het maximum aantal
+rondes op 2 of 3. Na afloop staat het resultaat in de worktree; jij bekijkt de diff en
+beslist zelf of er iets naar je echte tak gaat. De worktree blijft staan. Opruimen doe je
+met `git worktree remove <pad>` vanuit de repo.
 
-Twee dingen om te weten:
+### Testset: meten of de reviewer iets oplevert
 
+Vink **Met reviewer** uit voor de nulmeting: Claude alleen, met dezelfde tests, en stoppen
+zodra die groen zijn. Draai elke opdracht uit je testset twee keer, solo en duo, met
+hetzelfde label (bijvoorbeeld T1). **Resultatentabel opdrachten** links zet alle runs naast
+elkaar, met per variant: tests groen aan het eind, gemiddelde duur, terechte reviewpunten
+en hoeveel resultaten bruikbaar waren. Die laatste twee vul je zelf in de tabel in. Runs
+die op een fout strandden of die jij met Nu stoppen afbrak, tellen niet mee in de
+samenvatting. Stop je tijdens een teststap, dan staat die als AFGEBROKEN, niet als rood.
+
+Dingen om te weten:
+
+- **Het testcommando voert code uit die het model schreef.** Het commando zelf komt van
+  jou en nooit uit een modeltekst, maar het draait wel de code van de uitvoerder, met jouw
+  rechten. Zet het alleen in voor repo's waar dat geen kwaad kan. Leeg laten betekent: niet
+  testen.
+- **Testuitvoer gaat gemaskeerd naar OpenAI.** E-mailadressen, IP-adressen, hostnamen,
+  verbindingsreeksen en sleutelachtige tekenreeksen worden vervangen voordat de reviewer
+  ze ziet. De uitvoerder krijgt de uitvoer ongemaskeerd.
 - **Bash staat standaard uit.** De uitvoerder mag lezen en schrijven, maar geen commando's
-  draaien. Daardoor kan hij ook geen tests draaien. Zet je het aan, dan kan er een commando
-  lopen dat uit de tekst van de reviewer komt. Het vinkje zegt dat er ook bij.
+  draaien. Voor tests is Bash niet nodig, die draait de app. Zet je het aan, dan kan er een
+  commando lopen dat uit de tekst van de reviewer komt. Het vinkje zegt dat er ook bij.
 - **Dit kost veel.** Een uitvoerbeurt duurde in de test ongeveer 50 seconden en is een
   veelvoud van een gespreksbeurt. Twee rondes is vier beurten.
 
@@ -226,3 +270,10 @@ dat, en de CI draait het bij elke push.
 `codex` is een `.CMD`-shim en Python 3.13 start die niet op naam alleen. Daarom wordt het
 volledige pad opgezocht met `shutil.which` voor het starten. `claude` is een `.EXE` en
 heeft dat niet nodig.
+
+## API-sleutel in de omgeving
+
+Staat `ANTHROPIC_API_KEY` in je omgeving, bijvoorbeeld als Windows-gebruikersvariabele,
+dan kiest `claude -p` die sleutel boven je abonnementslogin. Is hij ongeldig, dan faalt
+elke Claude-beurt met "Invalid API key"; is hij geldig, dan betaal je per token. De app
+haalt die variabele daarom weg uit de omgeving van elke `claude`-aanroep.

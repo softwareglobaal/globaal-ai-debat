@@ -20,6 +20,7 @@
   --gpt-rand: #c3e0d8;
   --mens: #5a5fb8;
   --mens-vlak: #eeeefb;
+  --rood: #b83a2c;
   --schaduw: 0 1px 2px rgba(0,0,0,.05), 0 4px 12px rgba(0,0,0,.04);
 }
 @media (prefers-color-scheme: dark) {
@@ -37,6 +38,7 @@
     --gpt-rand: #27453b;
     --mens: #9aa0f0;
     --mens-vlak: #1e2030;
+    --rood: #f08a7d;
     --schaduw: 0 1px 2px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.2);
   }
 }
@@ -137,6 +139,44 @@ pre.diff .plus { color: var(--gpt); }
 pre.diff .min { color: var(--claude); }
 pre.diff .kop { color: var(--mens); font-weight: 600; }
 
+/* Testuitslag, gedraaid door de app zelf. */
+.beurt.test .etiket { color: var(--zacht); }
+.beurt.test .bel { border-left: 4px solid var(--zacht); }
+.beurt.test .bel.groen { border-left-color: var(--gpt); }
+.beurt.test .bel.rood { border-left-color: var(--rood); }
+
+/* Vonnis en resultaat: feiten als velden. */
+.kaartblok {
+  border: 2px solid var(--mens); border-radius: 14px; background: var(--vlak);
+  padding: 18px 22px; box-shadow: var(--schaduw);
+}
+.kaartblok h2 { margin: 0 0 12px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--mens); }
+.kaartblok dl { display: grid; grid-template-columns: 200px 1fr; gap: 8px 16px; margin: 0; }
+.kaartblok dt { color: var(--zacht); font-size: 13px; }
+.kaartblok dd { margin: 0; }
+.kaartblok ul { margin: 0; padding-left: 18px; }
+@media (max-width: 600px) { .kaartblok dl { grid-template-columns: 1fr; gap: 2px; } .kaartblok dd { margin-bottom: 8px; } }
+
+/* Resultatentabel */
+.samenvatting { display: flex; gap: 12px; flex-wrap: wrap; }
+.kaart {
+  background: var(--vlak); border: 1px solid var(--rand); border-radius: 10px;
+  padding: 12px 16px; min-width: 240px; cursor: pointer; text-align: left;
+  color: var(--tekst); font-weight: 400; line-height: 1.6;
+}
+.kaart.actief { border-color: var(--mens); outline: 1px solid var(--mens); }
+.kaart .kop { margin-bottom: 4px; }
+.tabel-wrap { overflow-x: auto; border: 1px solid var(--rand); border-radius: 10px; background: var(--vlak); }
+table.res { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.res th, table.res td { padding: 8px 10px; border-bottom: 1px solid var(--rand); text-align: left; white-space: nowrap; }
+table.res th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--zacht); font-weight: 700; }
+table.res td.breed { white-space: normal; min-width: 200px; }
+table.res input, table.res select { padding: 4px 6px; font-size: 13px; }
+table.res input[type=number] { width: 64px; }
+table.res tr.bewaard td { background: var(--gpt-vlak); }
+.groen-tekst { color: var(--gpt); font-weight: 600; }
+.rood-tekst { color: var(--rood); font-weight: 600; }
+
 .bezig { display: flex; gap: 8px; align-items: center; color: var(--zacht); font-size: 13px; padding: 4px 2px; }
 .punt { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: knipper 1.2s infinite; }
 .punt:nth-child(2) { animation-delay: .2s; }
@@ -188,6 +228,13 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
         <button class="stil klein" id="knop-repo">Kiezen</button>
       </div>
       <textarea id="opdracht-tekst" rows="6" placeholder="Beschrijf wat er moet gebeuren. Wees concreet: welk bestand, welk gedrag, hoe je weet dat het klopt."></textarea>
+      <label class="veld">Label in de testset<input type="text" id="opdracht-label" maxlength="40" placeholder="bijvoorbeeld T1"></label>
+      <label class="veld">Testcommando (optioneel)<input type="text" id="testcommando" placeholder="python -m pytest -q"></label>
+      <div style="font-size:12px;color:var(--zacht)">De app draait dit zelf in de worktree, voor de eerste ronde en na elke ronde. Het commando komt van jou, maar het voert code uit die de uitvoerder schreef.</div>
+      <label class="veld" style="flex-direction:row;align-items:flex-start;gap:8px">
+        <input type="checkbox" id="met-reviewer" checked style="width:auto;margin-top:4px">
+        <span>Met reviewer (ChatGPT). Uit is de nulmeting: Claude alleen, met dezelfde tests.</span>
+      </label>
     </div>
 
     <div class="blok" id="blok-onderwerp">
@@ -209,7 +256,7 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
       </div>
       <label class="veld" id="label-bash" hidden style="flex-direction:row;align-items:flex-start;gap:8px">
         <input type="checkbox" id="bash" style="width:auto;margin-top:4px">
-        <span>De uitvoerder mag commando's draaien. Nodig om tests te draaien, maar dan kan er ook een commando lopen dat uit de tekst van de reviewer komt.</span>
+        <span>De uitvoerder mag commando's draaien. Niet nodig voor tests, die draait de app zelf. Met dit aan kan er een commando lopen dat uit de tekst van de reviewer komt.</span>
       </label>
       <label class="veld">Claude-model
         <select id="claude-model"></select>
@@ -234,6 +281,7 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 
     <div class="blok">
       <div class="kop">Eerdere runs</div>
+      <button class="stil klein" id="knop-resultaten">Resultatentabel opdrachten</button>
       <div class="geschiedenis" id="geschiedenis"></div>
     </div>
   </aside>
@@ -375,7 +423,8 @@ async function laadGeschiedenis() {
     const b = document.createElement("button");
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `${r.modus === "ronde" ? "Codex-ronde · " : ""}${r.naam} · ${r.beurten} beurten`;
+    const extra = [r.label, r.variant, r.vonnis ? "vonnis" : ""].filter(Boolean).map((t) => ` · ${t}`).join("");
+    meta.textContent = `${r.modus === "ronde" ? "Codex-ronde · " : ""}${r.naam} · ${r.beurten} beurten${extra}`;
     b.textContent = r.vraag.slice(0, 70);
     b.appendChild(meta);
     b.onclick = () => openRun(r.naam);
@@ -405,15 +454,42 @@ function maakBeurt(b) {
   etiket.className = "etiket";
   etiket.textContent = b.spreker;
   if (b.kant !== "mens") {
+    // Een testbeurt komt van de app zelf: geen model tonen, alleen de duur.
+    const delen = [b.kant === "test" ? "" : b.model, b.duur_s != null ? `${b.duur_s}s` : ""];
+    if (b.standpunt) delen.push(`standpunt: ${b.standpunt.toLowerCase()}`);
+    if (b.oordeel) delen.push(`oordeel: ${b.oordeel.toLowerCase()}`);
     const grijs = document.createElement("span");
     grijs.className = "grijs";
-    grijs.textContent = " " + [b.model, b.duur_s != null ? `${b.duur_s}s` : ""].filter(Boolean).join(" · ");
+    grijs.textContent = " " + delen.filter(Boolean).join(" · ");
     etiket.appendChild(grijs);
   }
   const bel = document.createElement("div");
   bel.className = "bel";
   el.append(etiket, bel);
   bel.textContent = b.tekst;
+
+  if (b.test) {
+    // Afgebroken (groen null) blijft grijs: dat is geen uitslag.
+    if (b.test.groen !== null) bel.classList.add(b.test.groen ? "groen" : "rood");
+    const regel = document.createElement("div");
+    regel.className = "bestanden";
+    const blijft = b.test.niet_opgeruimd || [];
+    regel.textContent = b.test.commando +
+      (b.test.opgeruimd.length ? `   |   na de test opgeruimd: ${b.test.opgeruimd.join(", ")}` : "") +
+      (blijft.length ? `   |   NIET opgeruimd, komt in de volgende diff: ${blijft.join(", ")}` : "");
+    bel.appendChild(regel);
+    if (b.uitvoer && b.uitvoer.trim()) {
+      const d = document.createElement("details");
+      d.className = "diff";
+      const s = document.createElement("summary");
+      s.textContent = `Uitvoer bekijken (volledig in ${b.uitvoer_bestand})`;
+      const pre = document.createElement("pre");
+      pre.className = "diff";
+      pre.textContent = b.uitvoer;
+      d.append(s, pre);
+      bel.appendChild(d);
+    }
+  }
 
   if (b.bestanden) {
     const f = b.bestanden;
@@ -468,6 +544,75 @@ function toonBezig(naam) {
   $("stroom").appendChild(el);
 }
 
+// Een kaart met velden. Waarden zijn modeltekst, dus altijd via textContent.
+function toonKaart(id, titel, rijen, fout, ruw) {
+  const oud = document.getElementById(id);
+  if (oud) oud.remove();
+  const el = document.createElement("div");
+  el.id = id;
+  el.className = "kaartblok";
+  const kop = document.createElement("h2");
+  kop.textContent = titel;
+  el.appendChild(kop);
+  if (fout) {
+    const f = document.createElement("div");
+    f.className = "fout";
+    f.textContent = fout;
+    el.appendChild(f);
+    if (ruw) {
+      const pre = document.createElement("pre");
+      pre.className = "diff";
+      pre.style.whiteSpace = "pre-wrap";
+      pre.textContent = ruw;
+      el.appendChild(pre);
+    }
+  } else {
+    const dl = document.createElement("dl");
+    rijen.forEach(([naam, waarde]) => {
+      const dt = document.createElement("dt");
+      dt.textContent = naam;
+      const dd = document.createElement("dd");
+      if (Array.isArray(waarde)) {
+        if (!waarde.length) dd.textContent = "geen";
+        const ul = document.createElement("ul");
+        waarde.forEach((w) => { const li = document.createElement("li"); li.textContent = w; ul.appendChild(li); });
+        if (waarde.length) dd.appendChild(ul);
+      } else {
+        dd.textContent = waarde ?? "-";
+      }
+      dl.append(dt, dd);
+    });
+    el.appendChild(dl);
+  }
+  $("stroom").appendChild(el);
+}
+
+function toonVonnis(v) {
+  if (!v) return;
+  toonKaart("vonnis", "Vonnis" + (v.rechter ? ` (rechter: ${v.rechter})` : ""), [
+    ["Besluit", v.besluit],
+    ["Winnaar", v.winnaar_naam],
+    ["Doorslaggevend argument", v.doorslaggevend_argument],
+    ["Eens over", v.eens_over],
+    ["Open punten", v.open_punten],
+    ["Volgende stap", v.volgende_stap],
+  ], v.fout ? "Vonnis mislukt: " + v.fout : null, v.ruw);
+}
+
+const testwoord = (w) => (w === null || w === undefined ? "niet getest" : w ? "groen" : "rood");
+
+function toonResultaat(r) {
+  if (!r) return;
+  toonKaart("resultaat", "Resultaat", [
+    ["Label en variant", `${r.label || "geen label"}, ${r.variant === "duo" ? "duo (met reviewer)" : "solo (nulmeting)"}`],
+    ["Rondes", `${r.rondes_gedraaid} van ${r.rondes_gepland}`],
+    ["Tests", r.testcommando ? `start ${testwoord(r.tests_start)}, eind ${testwoord(r.tests_eind)}` : "geen testcommando"],
+    ["Duur", `${Math.round(r.duur_s || 0)}s`],
+    ["Gestopt omdat", r.fout ? "fout: " + r.fout : r.stop_reden],
+    ["Tak", r.tak],
+  ]);
+}
+
 function naarBeneden() {
   window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 }
@@ -479,12 +624,14 @@ async function poll() {
 
   if (s.onderwerp) $("titel").textContent = s.onderwerp.vraag;
   $("status").textContent = s.actief
-    ? `beurt ${s.aantal + 1} van ${s.totaal}`
-    : (s.run ? `${s.stop_gevraagd ? "gestopt" : "klaar"}, ${s.aantal} beurten` : "niet actief");
+    ? (s.bezig_met === "RECHTER" ? "vonnis wordt geveld" : `beurt ${Math.min(s.debatbeurten + 1, s.totaal)} van ${s.totaal}`)
+    : (s.run ? `${s.stop_gevraagd ? "gestopt" : "klaar"}, ${s.debatbeurten} beurten` +
+               (s.stop_reden && !s.stop_gevraagd ? ` (${s.stop_reden})` : "") : "niet actief");
   $("status").className = "pil" + (s.actief ? " loopt" : "");
 
   if (s.nieuwe.length) { toonBeurten(s.nieuwe, false); naarBeneden(); }
   toonBezig(s.actief ? s.bezig_met : null);
+  if (s.vonnis && !document.getElementById("vonnis")) { toonVonnis(s.vonnis); naarBeneden(); }
 
   const isOpdracht = s.modus === "opdracht";
   $("werkmap-pil").hidden = !s.werkmap;
@@ -495,8 +642,10 @@ async function poll() {
 
   $("knop-start").disabled = s.actief;
   $("knop-stop").disabled = !s.actief;
-  $("injectie-tekst").disabled = !s.actief || isOpdracht;
-  $("knop-injectie").disabled = !s.actief || isOpdracht;
+  // Tijdens het vonnis komt er geen beurt meer die een moderatorbericht kan oppakken.
+  const geenInbreng = !s.actief || isOpdracht || s.bezig_met === "RECHTER";
+  $("injectie-tekst").disabled = geenInbreng;
+  $("knop-injectie").disabled = geenInbreng;
   $("knop-injectie").textContent = s.wachtrij ? `Inbrengen (${s.wachtrij} wacht)` : "Inbrengen";
 
   if (s.fout && !document.getElementById("foutmelding")) {
@@ -520,12 +669,187 @@ async function openRun(naam) {
   historisch = true;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   $("titel").textContent = r.onderwerp.vraag;
-  $("status").textContent = `${naam}, ${r.beurten.length} beurten`;
+  $("status").textContent = `${naam}, ${r.beurten.filter((b) => b.kant !== "mens").length} beurten`;
   $("status").className = "pil";
+  $("werkmap-pil").hidden = true;
   toonBeurten(r.beurten, true);
+  toonBezig(null);
+  toonVonnis(r.vonnis);
+  toonResultaat(r.resultaat);
+  ["knop-stop", "injectie-tekst", "knop-injectie"].forEach((i) => ($(i).disabled = true));
+  $("knop-start").disabled = false;
+}
+
+let resultaten = [], filterVariant = null;
+
+async function openResultaten() {
+  resultaten = await haal("/api/resultaten");
+  historisch = true;
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  $("titel").textContent = "Resultaten opdrachtruns";
+  $("status").textContent = `${resultaten.length} runs`;
+  $("status").className = "pil";
+  $("werkmap-pil").hidden = true;
+  toonBeurten([], true);
   toonBezig(null);
   ["knop-stop", "injectie-tekst", "knop-injectie"].forEach((i) => ($(i).disabled = true));
   $("knop-start").disabled = false;
+  if (!resultaten.length) {
+    $("stroom").innerHTML = '<div class="leeg">Nog geen opdrachtruns met een resultaat. Start een opdracht met een label en een testcommando.</div>';
+    return;
+  }
+  const samen = document.createElement("div");
+  samen.id = "samenvatting";
+  samen.className = "samenvatting";
+  $("stroom").appendChild(samen);
+  const wrap = document.createElement("div");
+  wrap.className = "tabel-wrap";
+  wrap.appendChild(maakTabel());
+  $("stroom").appendChild(wrap);
+  toonSamenvatting();
+}
+
+// Mislukt of door jou gestopt: geen meting van de variant.
+const ongeldig = (r) => !!r.fout || r.stop_reden === "door jou gestopt";
+
+function toonSamenvatting() {
+  const doel = $("samenvatting");
+  doel.innerHTML = "";
+  [["solo", "Solo: Claude alleen"], ["duo", "Duo: Claude met ChatGPT-review"]].forEach(([variant, titel]) => {
+    const alle = resultaten.filter((r) => r.variant === variant);
+    if (!alle.length) return;
+    // Een run die op een fout strandde of die jij stopte, zegt niets over de variant.
+    const runs = alle.filter((r) => !ongeldig(r));
+    const mislukt = alle.length - runs.length;
+    const getest = runs.filter((r) => r.tests_eind !== null && r.tests_eind !== undefined);
+    const groen = getest.filter((r) => r.tests_eind).length;
+    const duur = runs.length ? runs.reduce((s, r) => s + (r.duur_s || 0), 0) / runs.length : 0;
+    const terecht = runs.reduce((s, r) => s + (r.oordeel.terecht || 0), 0);
+    const totaal = runs.reduce((s, r) => s + (r.oordeel.totaal || 0), 0);
+    const beoordeeld = runs.filter((r) => r.oordeel.bruikbaar !== null);
+    const bruikbaar = beoordeeld.filter((r) => r.oordeel.bruikbaar).length;
+    const regels = [
+      `${runs.length} runs` + (mislukt ? `, ${mislukt} mislukt of gestopt (niet meegeteld)` : ""),
+      `Tests groen aan het eind: ${groen} van ${getest.length}`,
+      `Gemiddelde duur: ${Math.round(duur)}s`,
+      `Bruikbaar: ${bruikbaar} van ${beoordeeld.length} beoordeeld`,
+    ];
+    if (variant === "duo") regels.splice(3, 0, `Reviewpunten terecht: ${terecht} van ${totaal}`);
+    const k = document.createElement("button");
+    k.type = "button";
+    k.className = "kaart" + (filterVariant === variant ? " actief" : "");
+    k.title = "Klik om de tabel op deze variant te filteren";
+    const kop = document.createElement("div");
+    kop.className = "kop";
+    kop.textContent = titel;
+    k.appendChild(kop);
+    regels.forEach((t) => { const d = document.createElement("div"); d.textContent = t; k.appendChild(d); });
+    k.onclick = () => {
+      filterVariant = filterVariant === variant ? null : variant;
+      document.querySelectorAll("table.res tbody tr").forEach((tr) => {
+        tr.hidden = !!filterVariant && tr.dataset.variant !== filterVariant;
+      });
+      toonSamenvatting();
+    };
+    doel.appendChild(k);
+  });
+}
+
+function maakTabel() {
+  const t = document.createElement("table");
+  t.className = "res";
+  const koppen = ["Label", "Variant", "Opdracht", "Rondes", "Tests start", "Tests eind", "Duur",
+                  "Review terecht", "van", "Bruikbaar", "Notitie", ""];
+  const kop = t.createTHead().insertRow();
+  koppen.forEach((k) => { const th = document.createElement("th"); th.textContent = k; kop.appendChild(th); });
+  const body = document.createElement("tbody");
+  resultaten.forEach((r) => {
+    const tr = document.createElement("tr");
+    tr.dataset.variant = r.variant;
+    tr.hidden = !!filterVariant && r.variant !== filterVariant;
+    const cel = (inhoud, klasse) => {
+      const td = document.createElement("td");
+      if (klasse) td.className = klasse;
+      if (inhoud instanceof Node) td.appendChild(inhoud); else td.textContent = inhoud ?? "-";
+      tr.appendChild(td);
+      return td;
+    };
+    const test = (w) => {
+      const s = document.createElement("span");
+      s.textContent = testwoord(w);
+      if (w !== null && w !== undefined) s.className = w ? "groen-tekst" : "rood-tekst";
+      return s;
+    };
+    const invoer = (veld, waarde, type) => {
+      const i = document.createElement("input");
+      i.type = type;
+      i.dataset.veld = veld;
+      if (type === "number") i.min = "0";
+      i.value = waarde ?? "";
+      i.disabled = r.variant !== "duo" && veld !== "notitie";
+      i.onchange = () => bewaarOordeel(r, tr);
+      return i;
+    };
+    cel(r.label || "-");
+    cel(r.variant);
+    cel(r.opdracht, "breed");
+    if (ongeldig(r)) {
+      const f = document.createElement("span");
+      f.className = "rood-tekst";
+      f.textContent = r.fout ? "mislukt" : "gestopt";
+      cel(f).title = r.fout ? "fout: " + r.fout : r.stop_reden;
+    } else {
+      cel(`${r.rondes_gedraaid} van ${r.rondes_gepland}`).title = r.stop_reden || "";
+    }
+    cel(test(r.tests_start));
+    cel(test(r.tests_eind));
+    cel(`${Math.round(r.duur_s || 0)}s`);
+    cel(invoer("terecht", r.oordeel.terecht, "number"));
+    cel(invoer("totaal", r.oordeel.totaal, "number"));
+    const keuze = document.createElement("select");
+    keuze.dataset.veld = "bruikbaar";
+    [["", "-"], ["ja", "ja"], ["nee", "nee"]].forEach(([w, l]) => {
+      const o = document.createElement("option"); o.value = w; o.textContent = l; keuze.appendChild(o);
+    });
+    keuze.value = r.oordeel.bruikbaar === null ? "" : (r.oordeel.bruikbaar ? "ja" : "nee");
+    keuze.onchange = () => bewaarOordeel(r, tr);
+    cel(keuze);
+    cel(invoer("notitie", r.oordeel.notitie, "text"), "breed");
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "stil klein";
+    open.textContent = "Run openen";
+    open.onclick = () => openRun(r.run);
+    cel(open);
+    body.appendChild(tr);
+  });
+  t.appendChild(body);
+  return t;
+}
+
+async function bewaarOordeel(r, tr) {
+  const v = (veld) => tr.querySelector(`[data-veld=${veld}]`).value;
+  const b = v("bruikbaar");
+  try {
+    const antwoord = await haal("/api/resultaat/" + r.run, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ terecht: v("terecht"), totaal: v("totaal"),
+                             bruikbaar: b === "" ? null : b === "ja", notitie: v("notitie") }),
+    });
+    r.oordeel = antwoord.oordeel;
+    toonSamenvatting();
+    tr.classList.add("bewaard");
+    setTimeout(() => tr.classList.remove("bewaard"), 800);
+  } catch (e) { alert("Bewaren mislukt: " + e.message); }
+}
+
+$("knop-resultaten").onclick = openResultaten;
+
+// De eerste regel van de opdracht als titel; ingekort zichtbaar, de volledige tekst blijft in de run.
+function titelVan(tekst) {
+  const regel = tekst.split("\n")[0];
+  return regel.length > 120 ? regel.slice(0, 117) + "..." : regel;
 }
 
 async function startOpdracht() {
@@ -541,12 +865,15 @@ async function startOpdracht() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        onderwerp: { vraag: tekst.split("\n")[0].slice(0, 120), opdracht: tekst, repo },
+        onderwerp: { vraag: titelVan(tekst), opdracht: tekst, repo },
         rondes: +$("rondes").value,
         max_woorden: +$("woorden").value,
         claude_model: $("claude-model").value,
         codex_model: $("codex-model").value.trim(),
         bash: $("bash").checked,
+        reviewer: $("met-reviewer").checked,
+        testcommando: $("testcommando").value.trim(),
+        label: $("opdracht-label").value.trim(),
       }),
     });
     startPollen();
@@ -664,8 +991,8 @@ function zetModus(nieuw) {
   $("label-bash").hidden = !opdracht;
   $("knop-start").textContent = opdracht ? "Opdracht starten" : "Debat starten";
   $("modus-uitleg").textContent = opdracht
-    ? "Claude schrijft de code in een git-worktree, ChatGPT valt de diff aan, Claude herziet."
-    : "Twee modellen verdedigen een tegengestelde positie.";
+    ? "Claude schrijft de code in een git-worktree, de app draait jouw tests, ChatGPT valt de diff aan, Claude herziet."
+    : "Twee modellen verdedigen een tegengestelde positie. Een rechter sluit af met een vonnis.";
   $("woorden").value = opdracht ? 300 : 250;
 }
 $("modus-debat").onclick = () => zetModus("debat");
@@ -844,6 +1171,8 @@ async function laadModellen() {
   await laadOnderwerpen();
   await laadGeschiedenis();
   const s = await haal("/api/status?vanaf=0");
+  // Opdracht is de kern; alleen een lopend debat opent in debatmodus.
+  zetModus(s.actief ? s.modus : "opdracht");
   if (s.actief || s.run) { toonBeurten(s.nieuwe, true); startPollen(); }
 })();
 </script>

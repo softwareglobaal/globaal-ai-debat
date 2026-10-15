@@ -175,12 +175,20 @@ Eisen:
 """
 
 
-# Patronen die niet in een briefing thuishoren. Sleutels zijn de melding.
+# Patronen die niet in een briefing thuishoren. Sleutels zijn de melding. Geen enkel patroon
+# bevat witruimte; opdracht.veilige_staart rekent daarop. De lookbehinds laten e-mailadres en
+# verbindingsreeks alleen aan het begin van een woord starten: zonder die grens zocht de regex
+# op een lang token zonder '@' kwadratisch terug (40.000 tekens kostte seconden).
 CONTROLES = [
-    ("e-mailadres", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+    # Aan elkaar hangende adressen (jan@x.nl+piet@y.be) worden een geheel, anders lekte het tweede.
+    ("e-mailadres", r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+                    r"(?:[._%+-][A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,})*"),
     ("IP-adres", r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
-    ("hostnaam", r"\b[a-z0-9-]+\.(?:globaal\.be|elevaitnv\.com|angela\.sr)\b"),
-    ("verbindingsreeks", r"[a-z]+://[^\s:@/]+:[^\s@/]+@\S+"),
+    ("hostnaam", r"(?<![a-z0-9-])[a-z0-9-]+\.(?:globaal\.be|elevaitnv\.com|angela\.sr)\b"),
+    # Gebruikersnaam mag leeg zijn (redis://:wachtwoord@host), het wachtwoord mag '/' bevatten,
+    # en het schema mag na '-d' of een cijfer staan (psql -dpostgres://...). Een poort met pad
+    # (http://host:5173/@vite) is geen wachtwoord.
+    ("verbindingsreeks", r"(?<![A-Za-z0-9+.-])[A-Za-z0-9+.-]+://[^\s:@/]*:(?!\d+/)[^\s@]+@\S+"),
     ("sleutel of token", r"\b(?:sk-|pk-|ghp_|gho_|xox[baprs]-|AKIA)[A-Za-z0-9_\-]{8,}"),
     ("lange geheimachtige tekenreeks", r"\b[A-Za-z0-9+/=_-]{40,}\b"),
 ]
@@ -202,6 +210,29 @@ def controleer_briefing(tekst: str) -> list:
         for tref in dict.fromkeys(re.findall(patroon, tekst)):
             gevonden.append({"soort": melding, "gemaskeerd": masker(tref)})
     return gevonden
+
+
+def maskeer(tekst: str) -> tuple:
+    """Vervangt elke treffer van CONTROLES door zijn masker. Voor tekst die zonder jouw
+    tussenkomst naar OpenAI gaat, zoals testuitvoer. Geeft (tekst, aantal vervangen).
+
+    Alle patronen zoeken op de oorspronkelijke tekst en overlappende treffers worden een
+    stuk. Na elkaar vervangen liet het e-mailpatroon eerst 'wachtwoord@host' wegnemen,
+    waarna de verbindingsreeks niet meer herkend werd en gebruiker en wachtwoordbegin lekten."""
+    stukken = sorted(m.span() for _, patroon in CONTROLES for m in re.finditer(patroon, tekst))
+    samen = []
+    for begin, eind in stukken:
+        if samen and begin < samen[-1][1]:
+            samen[-1][1] = max(samen[-1][1], eind)
+        else:
+            samen.append([begin, eind])
+    # In een keer opbouwen; per treffer de hele tekst kopieren was kwadratisch.
+    delen, vorige = [], 0
+    for begin, eind in samen:
+        delen += [tekst[vorige:begin], masker(tekst[begin:eind])]
+        vorige = eind
+    delen.append(tekst[vorige:])
+    return "".join(delen), len(samen)
 
 
 def maak_briefing(map_pad: str, woorden: int = 500, model: str = "sonnet",
