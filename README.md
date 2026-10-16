@@ -7,9 +7,9 @@ Laat Claude en ChatGPT met elkaar praten op de abonnementen, zonder API-keys.
 - De orkestrator wisselt de beurten af, schrijft alles weg en dwingt de limieten af.
 
 Twee modi: **Opdracht** (Claude schrijft code in een git-worktree, de app draait jouw tests,
-ChatGPT reviewt de diff, Claude herziet) en **Debat** (twee modellen verdedigen een
+Claude herstelt tot ze groen zijn) en **Debat** (Claude en ChatGPT verdedigen een
 tegengestelde positie, een rechter sluit af met een vonnis). Opdracht is de kern en staat
-standaard aan.
+standaard aan. In de opdrachtmodus doet ChatGPT niet mee; zie hieronder waarom.
 
 Elke run eindigt in velden, niet in een gesprek: een opdracht in `resultaat.json` (tests,
 rondes, duur, waarom gestopt, jouw oordeel), een debat in `vonnis.json` (besluit, winnaar,
@@ -67,7 +67,7 @@ Belangrijkste vlaggen:
 
 Per run komt er een map in `runs/<tijdstip>/`:
 
-- `board.jsonl` - één regel per beurt met spreker, model, tijdstip, duur, tekst en standpunt of oordeel
+- `board.jsonl` - één regel per beurt met spreker, model, tijdstip, duur, tekst en standpunt
 - `transcript.md` - leesbaar verslag, bij een debat met het vonnis onderaan
 - `onderwerp.json` - kopie van het gebruikte onderwerp
 - `vonnis.json` - debat: het vonnis van de rechter in velden
@@ -109,7 +109,7 @@ Claude en Codex samen op één plek.
 Na een harde stop (kill -9, stroomuitval) kan er een onvolledige rondemap achterblijven. Die
 staat niet in het dashboard; `python ronde.py resten` toont ze, `--weg` ruimt ze op.
 
-## Opdrachtmodus: uitvoerder en reviewer
+## Opdrachtmodus: Claude en jouw tests
 
 Naast het debat kan de app echt werk laten doen. Kies Opdracht in de zijbalk, wijs een
 git-repo aan en beschrijf wat er moet gebeuren.
@@ -123,24 +123,32 @@ Wat er dan gebeurt:
 2. De diff wordt vastgelegd, inclusief nieuwe en verwijderde bestanden.
 3. De app draait het testcommando opnieuw. Wat de tests aanmaken of wijzigen, wordt daarna
    teruggezet, zodat het nooit in de diff belandt; wat er is opgeruimd staat bij de uitslag.
-4. ChatGPT krijgt de opdracht, het verslag, de diff en de testuitslag, en levert
-   bevindingen. Hij sluit af met `OORDEEL: AKKOORD` of `OORDEEL: GEBREKEN`.
-5. Claude krijgt bevindingen en testuitslag als geciteerd materiaal terug en herziet.
+4. Groen: klaar. Rood: Claude krijgt de testuitvoer als geciteerd materiaal en herstelt in
+   een volgende ronde, tot het maximum aantal rondes. Wijzigt hij in een ronde niets meer,
+   dan stopt de run: dezelfde tests nog eens draaien levert niets nieuws op.
 
-De run stopt zodra de tests groen zijn en de reviewer akkoord is. Zet het maximum aantal
-rondes op 2 of 3. Na afloop staat het resultaat in de worktree; jij bekijkt de diff en
-beslist zelf of er iets naar je echte tak gaat. De worktree blijft staan. Opruimen doe je
-met `git worktree remove <pad>` vanuit de repo.
+Zonder testcommando is het altijd een ronde. Na afloop staat het resultaat in de worktree; jij
+bekijkt de diff en beslist zelf of er iets naar je echte tak gaat. De worktree blijft staan.
+Opruimen doe je met `git worktree remove <pad>` vanuit de repo.
 
-### Testset: meten of de reviewer iets oplevert
+### Waarom ChatGPT hier niet meer meedoet
 
-Vink **Met reviewer** uit voor de nulmeting: Claude alleen, met dezelfde tests, en stoppen
-zodra die groen zijn. Draai elke opdracht uit je testset twee keer, solo en duo, met
-hetzelfde label (bijvoorbeeld T1). **Resultatentabel opdrachten** links zet alle runs naast
-elkaar, met per variant: tests groen aan het eind, gemiddelde duur, terechte reviewpunten
-en hoeveel resultaten bruikbaar waren. Die laatste twee vul je zelf in de tabel in. Runs
-die op een fout strandden of die jij met Nu stoppen afbrak, tellen niet mee in de
-samenvatting. Stop je tijdens een teststap, dan staat die als AFGEBROKEN, niet als rood.
+Tot 16-10-2026 zat er een ChatGPT-reviewer tussen. Een testset van drie echte, eerder
+opgeloste fixes uit globaal-uitgaven (`Claude\ai-debat-testset\uitslag.md`), elk solo en
+met reviewer, beoordeeld tegen de echte fix:
+
+- Zonder inzage in de bestanden: de reviewer was 3 van 3 keer meteen akkoord, met 0 punten,
+  en maakte elke run ongeveer 20 seconden trager.
+- Met de volledige gewijzigde bestanden in de prompt: 4 terechte punten, maar het
+  eindresultaat werd in geen van de drie beter dan Claude alleen. In T1 lokten zijn punten
+  ongeteste databasecode uit, en echte zwaktes in T2 en T3 keurde hij goed.
+
+De afspraak was: alleen als het duo op alle drie minstens zo goed is. Dat haalde hij niet.
+
+**Resultatentabel opdrachten** links houdt de runs van die testset (solo en duo) en elke
+nieuwe run bij: tests groen aan het eind, duur, waarom gestopt, en jouw oordeel (bruikbaar,
+notitie). Runs die op een fout strandden of die jij met Nu stoppen afbrak, tellen niet mee in
+de samenvatting. Stop je tijdens een teststap, dan staat die als AFGEBROKEN, niet als rood.
 
 Dingen om te weten:
 
@@ -148,18 +156,11 @@ Dingen om te weten:
   jou en nooit uit een modeltekst, maar het draait wel de code van de uitvoerder, met jouw
   rechten. Zet het alleen in voor repo's waar dat geen kwaad kan. Leeg laten betekent: niet
   testen.
-- **Testuitvoer gaat gemaskeerd naar OpenAI.** E-mailadressen, IP-adressen, hostnamen,
-  verbindingsreeksen en sleutelachtige tekenreeksen worden vervangen voordat de reviewer
-  ze ziet. De uitvoerder krijgt de uitvoer ongemaskeerd.
+- **Er gaat niets naar OpenAI.** De opdrachtmodus gebruikt alleen Claude op je abonnement.
 - **Bash staat standaard uit.** De uitvoerder mag lezen en schrijven, maar geen commando's
   draaien. Voor tests is Bash niet nodig, die draait de app. Zet je het aan, dan kan er een
-  commando lopen dat uit de tekst van de reviewer komt. Het vinkje zegt dat er ook bij.
-- **Dit kost veel.** Een uitvoerbeurt duurde in de test ongeveer 50 seconden en is een
-  veelvoud van een gespreksbeurt. Twee rondes is vier beurten.
-
-De tekst van de reviewer komt altijd binnen tussen expliciete grensmarkeringen, met de
-instructie dat het materiaal is en geen opdracht. Dat is geen sluitende bescherming, maar
-het is de reden dat Bash standaard uit staat.
+  commando lopen dat uit de testuitvoer komt. Het vinkje zegt dat er ook bij.
+- **Wat het kost.** Een ronde duurde in de testset 25 tot 35 seconden.
 
 ## Projectmap als context
 

@@ -175,10 +175,9 @@ Eisen:
 """
 
 
-# Patronen die niet in een briefing thuishoren. Sleutels zijn de melding. Geen enkel patroon
-# bevat witruimte; opdracht.veilige_staart rekent daarop. De lookbehinds laten e-mailadres en
-# verbindingsreeks alleen aan het begin van een woord starten: zonder die grens zocht de regex
-# op een lang token zonder '@' kwadratisch terug (40.000 tekens kostte seconden).
+# Patronen die niet in een briefing thuishoren. Sleutels zijn de melding. De lookbehinds laten
+# e-mailadres, hostnaam en verbindingsreeks alleen aan het begin van een woord starten: zonder
+# die grens zocht de regex op een lang token kwadratisch terug (40.000 tekens kostte seconden).
 CONTROLES = [
     # Aan elkaar hangende adressen (jan@x.nl+piet@y.be) worden een geheel, anders lekte het tweede.
     ("e-mailadres", r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
@@ -210,29 +209,6 @@ def controleer_briefing(tekst: str) -> list:
         for tref in dict.fromkeys(re.findall(patroon, tekst)):
             gevonden.append({"soort": melding, "gemaskeerd": masker(tref)})
     return gevonden
-
-
-def maskeer(tekst: str) -> tuple:
-    """Vervangt elke treffer van CONTROLES door zijn masker. Voor tekst die zonder jouw
-    tussenkomst naar OpenAI gaat, zoals testuitvoer. Geeft (tekst, aantal vervangen).
-
-    Alle patronen zoeken op de oorspronkelijke tekst en overlappende treffers worden een
-    stuk. Na elkaar vervangen liet het e-mailpatroon eerst 'wachtwoord@host' wegnemen,
-    waarna de verbindingsreeks niet meer herkend werd en gebruiker en wachtwoordbegin lekten."""
-    stukken = sorted(m.span() for _, patroon in CONTROLES for m in re.finditer(patroon, tekst))
-    samen = []
-    for begin, eind in stukken:
-        if samen and begin < samen[-1][1]:
-            samen[-1][1] = max(samen[-1][1], eind)
-        else:
-            samen.append([begin, eind])
-    # In een keer opbouwen; per treffer de hele tekst kopieren was kwadratisch.
-    delen, vorige = [], 0
-    for begin, eind in samen:
-        delen += [tekst[vorige:begin], masker(tekst[begin:eind])]
-        vorige = eind
-    delen.append(tekst[vorige:])
-    return "".join(delen), len(samen)
 
 
 def maak_briefing(map_pad: str, woorden: int = 500, model: str = "sonnet",

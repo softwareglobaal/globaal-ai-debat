@@ -134,17 +134,20 @@ Meld aan de gebruiker welke modellen werken, en waar de app staat.
 - **Geen tools in debatmodus.** Beide kanten draaien zonder tools: Claude met
   `--safe-mode --tools ""`, Codex met `--sandbox read-only`. Een debatdeelnemer met tools
   is een prompt-injectiekanaal, want hij leest de tekst van de ander.
-- **Bash blijft standaard uit in opdrachtmodus.** De uitvoerder krijgt de reviewtekst
-  binnen; met Bash aan kan een zin daarin een commando worden. Het vinkje in de interface
-  is een bewuste keuze van de gebruiker per opdracht, niet iets om standaard aan te zetten.
+- **Bash blijft standaard uit in opdrachtmodus.** De uitvoerder krijgt testuitvoer binnen;
+  met Bash aan kan een zin daarin een commando worden. Het vinkje in de interface is een
+  bewuste keuze van de gebruiker per opdracht, niet iets om standaard aan te zetten.
+- **Geen reviewer in opdrachtmodus.** Eruit gehaald op 16-10-2026 na een testset
+  (`Claude\ai-debat-testset\uitslag.md`): ook met de volledige bestanden werd het resultaat
+  nergens beter dan Claude alleen. Niet terugzetten zonder een nieuwe testset die aantoont
+  dat het duo op elke opdracht minstens zo goed is.
 - **Opdrachtmodus werkt alleen in een git-worktree.** Nooit in de werkende map van de
   gebruiker, nooit pushen, nooit deployen. De worktree blijft staan; de gebruiker beslist.
 - **Het testcommando komt alleen van de gebruiker.** De app draait het zelf, nooit een
   model. Het voert wel code uit die de uitvoerder schreef; leeg betekent niet testen.
-  Testuitvoer gaat via `verkenner.maskeer` naar de reviewer, nooit ongemaskeerd.
 - **Elke run eindigt in velden.** Opdracht: `resultaat.json`. Debat: `vonnis.json`. Een
-  nieuwe afsluitregel voor een model (zoals `STANDPUNT:` of `OORDEEL:`) wordt alleen op de
-  laatste regel gelezen; ontbreekt hij, dan stopt er niets vroegtijdig.
+  nieuwe afsluitregel voor een model (zoals `STANDPUNT:`) wordt alleen op de laatste regel
+  gelezen; ontbreekt hij, dan stopt er niets vroegtijdig.
 - **Wat naar OpenAI gaat.** Alles in `context` en `briefing` gaat mee naar de
   ChatGPT-kant. Geen hostnamen, IP-adressen, e-mailadressen, sleutels of persoonsgegevens.
   De briefing-scan waarschuwt, maar haalt niets weg.
@@ -181,7 +184,7 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | "OAuth session expired" | Claude-login verlopen | gebruiker doet `/login` in een eigen `claude`-sessie |
 | "Invalid API key" bij elke Claude-beurt | `ANTHROPIC_API_KEY` staat in de omgeving en wint van de abonnementslogin | `debat.omgeving()` haalt hem weg voor elke `claude`-aanroep; niet terugdraaien |
 | "'codex' staat niet op PATH" terwijl het in je Claude Code-sessie wel werkt | codex is vanuit de Claude-desktopapp geïnstalleerd en staat in diens afgeschermde npm-map | `npm install -g @openai/codex` in een gewone terminal, daarna `codex login status` |
-| reviewer meldt dat het lezen van bestanden geblokkeerd is | Codex meldt een geblokkeerd toegangsbeleid (gezien op 15-10-2026); vermoedelijk de read-only sandbox op Windows | open punt: hij beoordeelt dan alleen diff en testuitslag; niet oplossen door de sandbox te verruimen |
+| Codex meldt dat het lezen van bestanden geblokkeerd is | geblokkeerd toegangsbeleid in `--sandbox read-only` op Windows (gezien 15-10-2026) | wat Codex moet zien, geef je mee in de prompt; niet oplossen door de sandbox te verruimen |
 | model staat in de lijst maar geeft een fout | lijst niet gecontroleerd op deze machine | `python controleer_modellen.py` |
 | Bewaren in het onderwerpvenster doet niets | het `close`-event van `<dialog>` vuurt niet betrouwbaar | acties hangen aan de klik op de knop; niet terug naar het close-event |
 | element met `hidden` blijft zichtbaar | een klasse met `display: flex` wint van `hidden` | `[hidden] { display: none !important; }` staat in de CSS; laten staan |
@@ -199,7 +202,7 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | `web.py` | Flask-server op 127.0.0.1:8099, draait debat en opdracht in een thread, plus de resultatentabel |
 | `pagina.html` | de hele interface, zonder framework |
 | `debat.py` | aanroepen van beide CLI's, prompts, standpunt, vonnis, stoppen, en een opdrachtregelversie |
-| `opdracht.py` | worktree, diff, tests draaien, uitvoerder- en reviewerprompts, reviewoordeel |
+| `opdracht.py` | worktree, diff, tests draaien (Job Object op Windows), uitvoerderprompt |
 | `verkenner.py` | briefing van een projectmap maken en scannen op gevoelige gegevens |
 | `controleer_modellen.py` | vaststellen welke modellen op deze machine werken |
 | `test_kant.py` | rooktest per kant |
@@ -209,7 +212,7 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | `starter.py` | start Codex voor `codex.sh` in een eigen procesgroep, met groepsbestand en stopmerker |
 | `test_ronde.py` | rondes, padcontrole, slot (gelijktijdig, traag, gecrasht), een uitkomst, HTML-grendel; ook in CI |
 | `test_codex_sh.py` | `codex.sh` met een nep-Codex: invoer, foutcodes, onderbreken; macOS en Linux in CI |
-| `test_meting.py` | tests door de app, nulmeting, resultaat, standpunt, vonnis, API-sleutel; met nagebootste modellen; ook in CI |
+| `test_meting.py` | tests door de app, opdrachtstroom zonder ChatGPT, resultaat, standpunt, vonnis, API-sleutel, briefingcontrole; met nagebootste modellen; ook in CI |
 | `docs/codex/` | opdracht, antwoord en verwerking van de Codex-rondes over deze repo |
 | `start.command` | macOS: dubbelklik in Finder |
 | `modellen.standaard.json` | veilige lijst tot `controleer_modellen.py` heeft gedraaid |

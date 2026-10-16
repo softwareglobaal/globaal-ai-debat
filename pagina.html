@@ -230,11 +230,7 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
       <textarea id="opdracht-tekst" rows="6" placeholder="Beschrijf wat er moet gebeuren. Wees concreet: welk bestand, welk gedrag, hoe je weet dat het klopt."></textarea>
       <label class="veld">Label in de testset<input type="text" id="opdracht-label" maxlength="40" placeholder="bijvoorbeeld T1"></label>
       <label class="veld">Testcommando (optioneel)<input type="text" id="testcommando" placeholder="python -m pytest -q"></label>
-      <div style="font-size:12px;color:var(--zacht)">De app draait dit zelf in de worktree, voor de eerste ronde en na elke ronde. Het commando komt van jou, maar het voert code uit die de uitvoerder schreef.</div>
-      <label class="veld" style="flex-direction:row;align-items:flex-start;gap:8px">
-        <input type="checkbox" id="met-reviewer" checked style="width:auto;margin-top:4px">
-        <span>Met reviewer (ChatGPT). Uit is de nulmeting: Claude alleen, met dezelfde tests.</span>
-      </label>
+      <div style="font-size:12px;color:var(--zacht)">De app draait dit zelf in de worktree, voor de eerste ronde en na elke ronde. Rood geeft een volgende ronde, groen stopt. Het commando komt van jou, maar het voert code uit die de uitvoerder schreef.</div>
     </div>
 
     <div class="blok" id="blok-onderwerp">
@@ -256,16 +252,16 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
       </div>
       <label class="veld" id="label-bash" hidden style="flex-direction:row;align-items:flex-start;gap:8px">
         <input type="checkbox" id="bash" style="width:auto;margin-top:4px">
-        <span>De uitvoerder mag commando's draaien. Niet nodig voor tests, die draait de app zelf. Met dit aan kan er een commando lopen dat uit de tekst van de reviewer komt.</span>
+        <span>De uitvoerder mag commando's draaien. Niet nodig voor tests, die draait de app zelf. Met dit aan kan er een commando lopen dat uit de testuitvoer komt.</span>
       </label>
       <label class="veld">Claude-model
         <select id="claude-model"></select>
       </label>
-      <label class="veld">ChatGPT-model
+      <label class="veld" id="label-codex-model">ChatGPT-model
         <select id="codex-model"></select>
       </label>
       <div id="modellen-info" style="font-size:12px;color:var(--zacht)"></div>
-      <label class="veld">Wie opent
+      <label class="veld" id="label-start">Wie opent
         <select id="start">
           <option value="claude">Claude</option>
           <option value="codex">ChatGPT</option>
@@ -604,7 +600,7 @@ const testwoord = (w) => (w === null || w === undefined ? "niet getest" : w ? "g
 function toonResultaat(r) {
   if (!r) return;
   toonKaart("resultaat", "Resultaat", [
-    ["Label en variant", `${r.label || "geen label"}, ${r.variant === "duo" ? "duo (met reviewer)" : "solo (nulmeting)"}`],
+    ["Label en variant", `${r.label || "geen label"}, ${r.variant === "duo" ? "duo (met ChatGPT-reviewer, tot 16-10-2026)" : (r.testcommando ? "Claude met tests" : "Claude zonder tests")}`],
     ["Rondes", `${r.rondes_gedraaid} van ${r.rondes_gepland}`],
     ["Tests", r.testcommando ? `start ${testwoord(r.tests_start)}, eind ${testwoord(r.tests_eind)}` : "geen testcommando"],
     ["Duur", `${Math.round(r.duur_s || 0)}s`],
@@ -715,7 +711,8 @@ const ongeldig = (r) => !!r.fout || r.stop_reden === "door jou gestopt";
 function toonSamenvatting() {
   const doel = $("samenvatting");
   doel.innerHTML = "";
-  [["solo", "Solo: Claude alleen"], ["duo", "Duo: Claude met ChatGPT-review"]].forEach(([variant, titel]) => {
+  // Duo-runs bestaan alleen nog uit de testset van 16-10-2026; de reviewer is daarna eruit gehaald.
+  [["solo", "Solo: Claude met tests"], ["duo", "Duo: met ChatGPT-review (tot 16-10)"]].forEach(([variant, titel]) => {
     const alle = resultaten.filter((r) => r.variant === variant);
     if (!alle.length) return;
     // Een run die op een fout strandde of die jij stopte, zegt niets over de variant.
@@ -869,9 +866,7 @@ async function startOpdracht() {
         rondes: +$("rondes").value,
         max_woorden: +$("woorden").value,
         claude_model: $("claude-model").value,
-        codex_model: $("codex-model").value.trim(),
         bash: $("bash").checked,
-        reviewer: $("met-reviewer").checked,
         testcommando: $("testcommando").value.trim(),
         label: $("opdracht-label").value.trim(),
       }),
@@ -989,9 +984,12 @@ function zetModus(nieuw) {
   $("label-beurten").hidden = opdracht;
   $("label-rondes").hidden = !opdracht;
   $("label-bash").hidden = !opdracht;
+  // In opdrachtmodus doet ChatGPT niet mee: alleen Claude en jouw tests.
+  $("label-codex-model").hidden = opdracht;
+  $("label-start").hidden = opdracht;
   $("knop-start").textContent = opdracht ? "Opdracht starten" : "Debat starten";
   $("modus-uitleg").textContent = opdracht
-    ? "Claude schrijft de code in een git-worktree, de app draait jouw tests, ChatGPT valt de diff aan, Claude herziet."
+    ? "Claude schrijft de code in een git-worktree, de app draait jouw tests, Claude herstelt tot ze groen zijn."
     : "Twee modellen verdedigen een tegengestelde positie. Een rechter sluit af met een vonnis.";
   $("woorden").value = opdracht ? 300 : 250;
 }

@@ -87,11 +87,6 @@ class Standpunt(unittest.TestCase):
                                            {"kant": "codex", "standpunt": "HANDHAAF"}]))
         self.assertFalse(debat.beide_eens([{"kant": "claude", "standpunt": "EENS"}]))
 
-    def test_reviewoordeel(self):
-        self.assertEqual(opdracht.splits_oordeel("Prima.\n**OORDEEL:** akkoord"), ("Prima.", "AKKOORD"))
-        self.assertEqual(opdracht.splits_oordeel("x\nOORDEEL: GEBREKEN")[1], "GEBREKEN")
-        self.assertIsNone(opdracht.splits_oordeel("geen regel")[1])
-
 
 class Vonnis(unittest.TestCase):
     VELDEN = ('"besluit": "a", "doorslaggevend_argument": "b", "eens_over": "kosten", '
@@ -156,67 +151,43 @@ class Omgeving(unittest.TestCase):
                 os.environ["ANTHROPIC_API_KEY"] = oud
 
 
-class Maskeren(unittest.TestCase):
-    def test_testuitvoer_naar_reviewer(self):
-        tekst, n = verkenner.maskeer("verbinding met 10.1.2.3 en db.globaal.be faalde, mail jan@voorbeeld.nl")
-        self.assertEqual(n, 3)
-        for geheim in ("10.1.2.3", "db.globaal.be", "jan@voorbeeld.nl"):
-            self.assertNotIn(geheim, tekst)
+class Briefingcontrole(unittest.TestCase):
+    """De controle op wat niet naar OpenAI hoort (briefing van een projectmap)."""
 
-    def test_verbindingsreeks_helemaal_weg(self):
-        for reeks, geheimen in (("postgres://admin:Geheim!Wachtwoord2026@db.example.com:5432/app",
-                                 ("admin", "Geheim", "Wachtwoord")),
-                                ("redis://deploy:wachtwoord@cache.intern:6379/0", ("deploy", "wac")),
-                                ("redis://:Wachtwoord2026@redis:6379/0", ("Wachtwoord",)),
-                                ("postgres://app:Xy7/kL9+qPz2@db:5432/app", ("Xy7", "kL9")),
-                                ("https://deploy:Ab/9xQ+zz@db.example.com/app", ("deploy", "Ab/9")),
-                                ("postgresql+psycopg2://app:geheim@db:5432/app", ("geheim",))):
-            tekst, _ = verkenner.maskeer(f"fout bij {reeks} na 3 pogingen")
-            for geheim in geheimen:
-                self.assertNotIn(geheim, tekst)
-            self.assertIn("na 3 pogingen", tekst)
+    @staticmethod
+    def soorten(tekst):
+        return {t["soort"] for t in verkenner.controleer_briefing(tekst)}
 
-    def test_gewone_url_en_mail_blijven_apart(self):
-        tekst, _ = verkenner.maskeer("zie http://host:8080/pad en mail jan@x.nl")
-        self.assertIn("http://host:8080/pad en mail", tekst)
+    def test_ip_host_en_mail(self):
+        self.assertTrue({"IP-adres", "hostnaam", "e-mailadres"} <= self.soorten(
+            "verbinding met 10.1.2.3 en db.globaal.be faalde, mail jan@voorbeeld.nl"))
+
+    def test_verbindingsreeksen(self):
+        for reeks in ("postgres://admin:Geheim!Wachtwoord2026@db.example.com:5432/app",
+                      "redis://deploy:wachtwoord@cache.intern:6379/0",
+                      "redis://:Wachtwoord2026@redis:6379/0",
+                      "postgres://app:Xy7/kL9+qPz2@db:5432/app",
+                      "https://deploy:Ab/9xQ+zz@db.example.com/app",
+                      "postgresql+psycopg2://app:geheim@db:5432/app",
+                      "psql -dpostgres://admin:Geheim2026@db:5432/app"):
+            self.assertIn("verbindingsreeks", self.soorten(f"fout bij {reeks} na 3 pogingen"), reeks)
+
+    def test_gewone_url_is_geen_verbindingsreeks(self):
+        self.assertNotIn("verbindingsreeks", self.soorten("zie http://host:8080/pad en mail jan@x.nl"))
         # Een poort met een pad dat '@' bevat, is geen wachtwoord.
         for url in ("http://localhost:5173/@vite/client", "https://registry.npmjs.org:443/@types/node"):
-            self.assertEqual(verkenner.maskeer(url), (url, 0))
+            self.assertEqual(verkenner.controleer_briefing(url), [])
 
-    def test_reeks_midden_in_een_woord(self):
-        for tekst, geheim in (("psql -dpostgres://admin:Geheim2026@db:5432/app", "Geheim"),
-                              ("1postgres://admin:Geheim2026@db:5432/app", "admin"),
-                              ("mail jan@x.nl+piet@voorbeeld.be", "piet")):
-            uit, _ = verkenner.maskeer(tekst)
-            self.assertNotIn(geheim, uit)
-            self.assertTrue(verkenner.controleer_briefing(tekst))
+    def test_aan_elkaar_hangende_adressen(self):
+        treffers = verkenner.controleer_briefing("mail jan@x.nl+piet@voorbeeld.be")
+        self.assertEqual(len(treffers), 1)
+        self.assertNotIn("piet", treffers[0]["gemaskeerd"])
 
     def test_vijandige_invoer_blijft_lineair(self):
         begin = time.time()
         for stuk in ("a" * 40000, "a." * 20000, "a-" * 20000, "a+" * 20000, "a1:" * 13000):
-            verkenner.maskeer(stuk)
             verkenner.controleer_briefing(stuk)
         self.assertLess(time.time() - begin, 5)
-
-    def test_grote_uitvoer_blijft_snel(self):
-        # Verbose testuitvoer met een treffer per regel, en een lang token zonder '@'.
-        groot = "".join(f"GET /api/{i} van 127.0.0.1 ok\n" for i in range(20000)) + "a1" * 50000
-        begin = time.time()
-        verkenner.maskeer(groot)
-        test = {"commando": "pytest", "uitvoer": groot, "groen": True, "exitcode": 0, "timeout": False}
-        verschil = {"diff": "", "toegevoegd": [], "gewijzigd": [], "verwijderd": []}
-        opdracht.review_prompt("o", "v", verschil, 1000, test)
-        self.assertLess(time.time() - begin, 5)
-
-    def test_eerst_maskeren_dan_afkappen(self):
-        sleutel = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
-        # De knip van staart() valt midden in de sleutel.
-        uitvoer = sleutel + "y " * ((opdracht.TESTSTAART_PROMPT - len(sleutel) + 20) // 2)
-        test = {"commando": "pytest", "uitvoer": uitvoer, "groen": False, "exitcode": 1,
-                "timeout": False}
-        verschil = {"diff": "", "toegevoegd": [], "gewijzigd": [], "verwijderd": []}
-        prompt = opdracht.review_prompt("o", "v", verschil, 1000, test)
-        self.assertNotIn(sleutel[20:], prompt)
 
     def test_afkappen_zichtbaar(self):
         self.assertEqual(opdracht.staart("abc", 10), "abc")
@@ -354,50 +325,65 @@ class TestsDoorDeApp(Werkplaats):
 class Opdrachtstroom(Werkplaats):
     """De hele opdrachtrun met nagebootste modellen: stoppen op het juiste moment, resultaat in velden."""
 
-    def draai(self, reviewer, review="Geen gebreken.\nOORDEEL: AKKOORD", cmd=None):
-        aanroepen = {"uitvoerder": 0, "reviewer": 0, "reviewprompt": ""}
+    def draai(self, cmd=None, oplossingen=(GOED,), zonder_tests=False):
+        """oplossingen: wat de nagebootste uitvoerder per ronde in reken.py zet."""
+        aanroepen = {"uitvoerder": 0, "prompts": []}
 
         def uitvoerder(systeem, prompt, model, timeout, werkmap, bash, registreer=None):
+            aanroepen["prompts"].append(prompt)
+            tekst = oplossingen[min(aanroepen["uitvoerder"], len(oplossingen) - 1)]
             aanroepen["uitvoerder"] += 1
-            (Path(werkmap) / "reken.py").write_text(GOED, encoding="utf-8")
+            (Path(werkmap) / "reken.py").write_text(tekst, encoding="utf-8")
             return "reken.py aangepast."
 
-        def nep_reviewer(systeem, prompt, model, timeout, werkmap, registreer=None):
-            aanroepen["reviewer"] += 1
-            aanroepen["reviewprompt"] = prompt
-            return review
+        def geen_chatgpt(*a, **k):
+            raise AssertionError("de opdrachtmodus hoort ChatGPT niet aan te roepen")
 
-        oud = (opdracht.roep_uitvoerder, opdracht.roep_reviewer)
-        opdracht.roep_uitvoerder, opdracht.roep_reviewer = uitvoerder, nep_reviewer
+        oud = (opdracht.roep_uitvoerder, debat.roep_codex)
+        opdracht.roep_uitvoerder, debat.roep_codex = uitvoerder, geen_chatgpt
         try:
             web.draai_opdracht(
                 {"vraag": OPDRACHT, "opdracht": OPDRACHT, "repo": str(self.repo)},
-                {"rondes": 3, "max_woorden": 100, "claude_model": "sonnet", "codex_model": "",
-                 "bash": False, "reviewer": reviewer, "testcommando": cmd or self.cmd, "label": "T1",
+                {"rondes": 3, "max_woorden": 100, "claude_model": "sonnet", "bash": False,
+                 "testcommando": "" if zonder_tests else (cmd or self.cmd), "label": "T1",
                  "timeout": 60, "test_timeout": 60})
         finally:
-            opdracht.roep_uitvoerder, opdracht.roep_reviewer = oud
+            opdracht.roep_uitvoerder, debat.roep_codex = oud
         run = next(web.RUNS.iterdir())
         return json.loads((run / "resultaat.json").read_text(encoding="utf-8")), aanroepen
 
-    def test_solo_stopt_bij_groen(self):
-        r, n = self.draai(reviewer=False)
+    def test_stopt_bij_groen(self):
+        r, n = self.draai()
         self.assertEqual((r["variant"], r["tests_start"], r["tests_eind"]), ("solo", False, True))
         self.assertEqual((r["rondes_gedraaid"], r["stop_reden"]), (1, "tests groen"))
-        self.assertEqual((n["uitvoerder"], n["reviewer"]), (1, 0))
+        self.assertEqual(n["uitvoerder"], 1)
+        self.assertIsNone(r["fout"])
+        self.assertIsNone(r["reviewer"])
+
+    def test_rood_geeft_een_volgende_ronde_met_de_testuitvoer(self):
+        # Ronde 1 laat de fout staan (alleen een commentaarregel erbij), ronde 2 herstelt.
+        r, n = self.draai(oplossingen=("# poging\n" + FOUT, GOED))
+        self.assertEqual((r["rondes_gedraaid"], r["tests_per_ronde"], r["stop_reden"]),
+                         (2, [False, True], "tests groen"))
+        self.assertIn("Dit is ronde 2", n["prompts"][1])
+        self.assertIn("lege lijst moet 0 geven", n["prompts"][1])
+
+    def test_zonder_tests_een_ronde(self):
+        r, n = self.draai(zonder_tests=True)
+        self.assertEqual((r["rondes_gepland"], r["rondes_gedraaid"], r["stop_reden"], n["uitvoerder"]),
+                         (1, 1, "geen tests: een ronde", 1))
+        self.assertEqual(web.STAAT["totaal"], 1, "de teller hoort geen rondes te beloven die niet komen")
+
+    def test_ronde_zonder_wijziging_stopt(self):
+        # Rood, en de uitvoerder schrijft elke ronde precies hetzelfde: na ronde 2 is het op.
+        r, n = self.draai(oplossingen=("# poging\n" + FOUT,))
+        self.assertEqual((r["rondes_gedraaid"], r["tests_per_ronde"], r["stop_reden"], n["uitvoerder"]),
+                         (2, [False], "uitvoerder wijzigde niets meer", 2))
         self.assertIsNone(r["fout"])
 
-    def test_duo_stopt_bij_groen_en_akkoord(self):
-        r, n = self.draai(reviewer=True)
-        self.assertEqual((r["variant"], r["stop_reden"]), ("duo", "tests groen en reviewer akkoord"))
-        self.assertEqual(r["oordelen_reviewer"], ["AKKOORD"])
-        self.assertEqual((n["uitvoerder"], n["reviewer"]), (1, 1))
-        self.assertIn("GESLAAGD (exitcode 0)", n["reviewprompt"])
-
-    def test_duo_gaat_door_bij_gebreken(self):
-        r, n = self.draai(reviewer=True, review="Randgeval ontbreekt.\nOORDEEL: GEBREKEN")
-        self.assertEqual((r["rondes_gedraaid"], r["stop_reden"]), (3, "alle rondes gedraaid"))
-        self.assertEqual(n["reviewer"], 3)
+    def test_reviewer_is_weg(self):
+        for naam in ("roep_reviewer", "review_prompt", "REVIEWER", "splits_oordeel"):
+            self.assertFalse(hasattr(opdracht, naam), naam)
 
     def test_nu_stoppen_tijdens_tests_is_geen_rode_test(self):
         # Na de wijziging blijven de tests lang lopen; tijdens die teststap druk jij Nu stoppen.
@@ -415,7 +401,7 @@ class Opdrachtstroom(Werkplaats):
 
         stopper = threading.Thread(target=stop_tijdens_tests)
         stopper.start()
-        r, _ = self.draai(reviewer=True, cmd=cmd)
+        r, _ = self.draai(cmd=cmd)
         stopper.join(15)
         self.assertEqual(r["stop_reden"], "door jou gestopt")
         self.assertFalse(r["tests_start"])
@@ -435,7 +421,7 @@ class Opdrachtstroom(Werkplaats):
         self.assertEqual(r.get_json()["beurten"], [])
 
     def test_oordeel_bewaren_via_eigen_pagina(self):
-        self.draai(reviewer=False)
+        self.draai()
         run = next(web.RUNS.iterdir()).name
         c = web.app.test_client()
         r = c.post(f"/api/resultaat/{run}", json={"terecht": "1", "totaal": 2, "bruikbaar": True,

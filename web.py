@@ -242,30 +242,30 @@ def schrijf_resultaat(run_dir, resultaat):
 
 
 def draai_opdracht(onderwerp, config):
-    """Uitvoerder schrijft, de app test, reviewer valt aan, uitvoerder herziet. In een
-    worktree. Zonder reviewer is het de nulmeting: Claude alleen, met dezelfde tests."""
+    """Uitvoerder schrijft, de app test, uitvoerder herstelt tot de tests groen zijn. In een
+    worktree. De ChatGPT-reviewer is eruit (testset 16-10-2026, zie opdracht.py)."""
     run_dir = RUNS / datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "onderwerp.json").write_text(
         json.dumps(onderwerp, ensure_ascii=False, indent=2), encoding="utf-8")
 
     commando = config["testcommando"]
-    met_review = config["reviewer"]
-    stappen = config["rondes"] * (1 + bool(commando) + met_review) + bool(commando)
+    # Zonder tests is er niets om in een volgende ronde op te herstellen: altijd een ronde.
+    rondes = config["rondes"] if commando else 1
+    stappen = rondes * (1 + bool(commando)) + bool(commando)
     zet(actief=True, run=run_dir.name, onderwerp=onderwerp, beurten=[],
         totaal=stappen, fout=None, stop_gevraagd=False, bezig_met=None,
         modus="opdracht", werkmap=None, tak=None, vonnis=None, stop_reden=None)
 
-    # De feiten van deze run als velden; het oordeel vul jij later in de tabel in.
+    # De feiten van deze run als velden; het oordeel vul jij later in de tabel in. Variant
+    # blijft 'solo', zodat oude duo-runs in de tabel ernaast te vergelijken blijven.
     resultaat = {
-        "label": config["label"], "variant": "duo" if met_review else "solo",
+        "label": config["label"], "variant": "solo",
         "repo": Path(onderwerp["repo"]).name, "opdracht": onderwerp["vraag"],
-        "uitvoerder": config["claude_model"],
-        "reviewer": (config["codex_model"] or "standaard") if met_review else None,
+        "uitvoerder": config["claude_model"], "reviewer": None,
         "testcommando": commando or None, "tak": None,
-        "rondes_gepland": config["rondes"], "rondes_gedraaid": 0,
+        "rondes_gepland": rondes, "rondes_gedraaid": 0,
         "tests_start": None, "tests_per_ronde": [], "tests_eind": None,
-        "oordelen_reviewer": [],
         "duur_s": None, "stop_reden": None, "fout": None,
         "oordeel": {"terecht": None, "totaal": None, "bruikbaar": None, "notitie": ""},
     }
@@ -305,17 +305,17 @@ def draai_opdracht(onderwerp, config):
             if not gestopt():
                 resultaat["tests_start"] = test["groen"]
 
-        review = ""
-        for ronde in range(1, config["rondes"] + 1):
+        vorige_diff = ""
+        for ronde in range(1, rondes + 1):
             if gestopt():
                 break
 
-            # De uitvoerder schrijft of herziet.
+            # De uitvoerder schrijft of herstelt.
             zet(bezig_met=f"UITVOERDER (ronde {ronde})")
             begin = time.time()
             verslag = opdracht.roep_uitvoerder(
                 opdracht.UITVOERDER.format(woorden=config["max_woorden"]),
-                opdracht.uitvoer_prompt(onderwerp["opdracht"], review, ronde, test, commando),
+                opdracht.uitvoer_prompt(onderwerp["opdracht"], ronde, test, commando),
                 config["claude_model"], config["timeout"], werkmap,
                 config["bash"], registreer_proces)
             if gestopt():
@@ -338,6 +338,12 @@ def draai_opdracht(onderwerp, config):
                 zet(fout="de uitvoerder heeft niets gewijzigd, run gestopt")
                 resultaat["stop_reden"] = "uitvoerder wijzigde niets"
                 break
+            # De diff telt alles sinds de start; gelijk aan vorige ronde = deze ronde niets
+            # gedaan. Dezelfde tests nog eens draaien levert dan niets nieuws op.
+            if verschil["diff"] == vorige_diff:
+                resultaat["stop_reden"] = "uitvoerder wijzigde niets meer"
+                break
+            vorige_diff = verschil["diff"]
 
             if commando:
                 test = test_stap(f"na ronde {ronde}", f"ronde-{ronde}")
@@ -346,46 +352,12 @@ def draai_opdracht(onderwerp, config):
                 resultaat["tests_per_ronde"].append(test["groen"])
                 resultaat["tests_eind"] = test["groen"]
 
-            if not met_review:
-                # Nulmeting: alleen de tests sturen bij. Groen of geen tests: klaar.
-                if not commando:
-                    resultaat["stop_reden"] = "geen reviewer en geen tests"
-                    break
-                if test["groen"]:
-                    resultaat["stop_reden"] = "tests groen"
-                    break
-                continue
-
-            # De reviewer beoordeelt.
-            zet(bezig_met=f"REVIEWER (ronde {ronde})")
-            begin = time.time()
-            prompt = opdracht.review_prompt(onderwerp["opdracht"], verslag, verschil, 60000,
-                                            test if commando else None)
-            # Nu stoppen terwijl de prompt werd opgebouwd: dan gaat er niets naar OpenAI.
-            if gestopt():
+            # Alleen rode tests geven een volgende ronde iets om op te herstellen.
+            if not commando:
+                resultaat["stop_reden"] = "geen tests: een ronde"
                 break
-            review = opdracht.roep_reviewer(
-                opdracht.REVIEWER.format(woorden=config["max_woorden"]), prompt,
-                config["codex_model"], config["timeout"], werkmap, registreer_proces)
-            if gestopt():
-                break
-            review, oordeel = opdracht.splits_oordeel(review)
-            nr += 1
-            voeg_beurt_toe({
-                "nr": nr, "spreker": f"REVIEWER (ChatGPT, ronde {ronde})",
-                "kant": "codex", "soort": "review",
-                "model": config["codex_model"] or "standaard",
-                "tijd": datetime.now().isoformat(timespec="seconds"),
-                "duur_s": round(time.time() - begin, 1),
-                "tekst": review,
-                "oordeel": oordeel,
-            }, run_dir)
-            resultaat["oordelen_reviewer"].append(oordeel)
-
-            # Groen en akkoord: nog een ronde kost tijd en levert niets op.
-            if oordeel == "AKKOORD" and (not commando or test["groen"]):
-                resultaat["stop_reden"] = ("tests groen en reviewer akkoord" if commando
-                                           else "reviewer akkoord")
+            if test["groen"]:
+                resultaat["stop_reden"] = "tests groen"
                 break
         else:
             resultaat["stop_reden"] = resultaat["stop_reden"] or "alle rondes gedraaid"
@@ -416,9 +388,7 @@ def api_opdracht():
         "rondes": max(1, min(6, int(gegevens.get("rondes", 2)))),
         "max_woorden": max(50, min(800, int(gegevens.get("max_woorden", 300)))),
         "claude_model": gegevens.get("claude_model", "sonnet"),
-        "codex_model": gegevens.get("codex_model", ""),
         "bash": bool(gegevens.get("bash", False)),
-        "reviewer": bool(gegevens.get("reviewer", True)),
         "testcommando": str(gegevens.get("testcommando") or "").strip()[:500],
         "label": "".join(t for t in str(gegevens.get("label") or "") if t.isalnum() or t in "-_ ")[:40].strip(),
         "timeout": 1800,
