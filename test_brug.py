@@ -139,6 +139,7 @@ class BrugTests(unittest.TestCase):
         self.assertIn("~/dev/globaal-ai-debat/brug.sh", uit.stderr)
         self.assertFalse(list((self.basis / "wachtrij").glob("*.json")))
 
+    @unittest.skipUnless(os.name == "posix", "brug werkt alleen op macOS/Linux; Windows-paden bevatten een backslash")
     def test_indienen_uit_bestand_en_opties_direct_getoetst(self):
         self.fake_hartslag()
         opdrachtbestand = self.root / "opdracht.md"
