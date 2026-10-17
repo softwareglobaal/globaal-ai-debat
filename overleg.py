@@ -18,9 +18,11 @@ Hoe het werkt:
 
 import argparse
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -371,21 +373,43 @@ def main(argv=None) -> int:
         return 2
     rapport = Path(args.rapport)
     titel = args.titel or f"Overleg Codex+Gemini: {werkmap.name} - {rapport.stem}"
-    return draai_overleg(
-        werkmap=werkmap,
-        rapport=rapport,
-        titel=titel,
-        opdracht_tekst=opdracht_tekst,
-        rondes=max(1, min(6, args.beurten)),
-        codex_model=args.codex_model,
-        codex_niveau=args.codex_niveau,
-        gemini_model=args.gemini_model,
-        gemini_niveau=args.gemini_niveau,
-        claude_model=args.claude_model,
-        claude_niveau=args.claude_niveau,
-        met_claude=args.met_claude,
-        timeout=args.timeout,
-    )
+    oude_signalen = {}
+    stop_signaal_bezig = False
+
+    def stop_signaal(nummer, _frame):
+        nonlocal stop_signaal_bezig
+        if stop_signaal_bezig:
+            return
+        stop_signaal_bezig = True
+        for stopnummer in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(stopnummer, signal.SIG_IGN)
+        raise KeyboardInterrupt
+
+    if os.name == "posix" and threading.current_thread() is threading.main_thread():
+        for nummer in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            oude_signalen[nummer] = signal.signal(nummer, stop_signaal)
+    try:
+        return draai_overleg(
+            werkmap=werkmap,
+            rapport=rapport,
+            titel=titel,
+            opdracht_tekst=opdracht_tekst,
+            rondes=max(1, min(6, args.beurten)),
+            codex_model=args.codex_model,
+            codex_niveau=args.codex_niveau,
+            gemini_model=args.gemini_model,
+            gemini_niveau=args.gemini_niveau,
+            claude_model=args.claude_model,
+            claude_niveau=args.claude_niveau,
+            met_claude=args.met_claude,
+            timeout=args.timeout,
+        )
+    except KeyboardInterrupt:
+        print("overleg.py: gestopt door signaal of Ctrl+C", file=sys.stderr)
+        return 130
+    finally:
+        for nummer, vorige in oude_signalen.items():
+            signal.signal(nummer, vorige)
 
 
 if __name__ == "__main__":

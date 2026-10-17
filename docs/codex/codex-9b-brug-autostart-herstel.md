@@ -1,0 +1,11 @@
+**Klaar met kanttekening.** O9b is hersteld in de gevraagde worktree en blijft ongecommit.
+
+1. **Stoppen:** `SIGTERM`, `SIGHUP` en Ctrl+C stoppen het overleg en zijn kinderen. De taak krijgt exitcode 130; verweesde taken krijgen bij de volgende luisteraar exitcode 3. Tests in [test_brug.py](/Users/mehdichegini/dev/_codex-brug-autostart/test_brug.py:482) en [test_overleg.py](/Users/mehdichegini/dev/_codex-brug-autostart/test_overleg.py:155) dekken ook dubbele signalen en open uitvoerpijpen.
+2. **Overdracht:** reserves melden zich per proces, proberen het slot elke 0,5 seconde en houden de brug beschikbaar. Een wachtende indiener volgt een geclaimde taak; een achtergebleven wachtrijtaak wordt ingetrokken. Gerichte tests staan in [test_brug.py](/Users/mehdichegini/dev/_codex-brug-autostart/test_brug.py:583).
+3. **Geheimen:** ruwe waarden, waarden zonder omringende spaties en hun JSON-vorm worden afgeschermd. De tests staan in [test_brug.py](/Users/mehdichegini/dev/_codex-brug-autostart/test_brug.py:429).
+4. **Meting:** bij één slechte meting probeert de brug met een wachtende taak binnen een seconde opnieuw; `--eenmalig` wacht op herstel. De socketloze `--eenmalig`-test slaagt ([test_brug.py](/Users/mehdichegini/dev/_codex-brug-autostart/test_brug.py:763)).
+5. **Sidecar:** de installateur herkent een levende reserve en neemt een vrije oude terminal-luisteraar gecontroleerd over. Tests dekken `--laat-staan`, `--niet-wachten`, een lopende taak en een onbekende PID ([test_brug.py](/Users/mehdichegini/dev/_codex-brug-autostart/test_brug.py:867)). [README.md](/Users/mehdichegini/dev/_codex-brug-autostart/README.md:123) en [CLAUDE.md](/Users/mehdichegini/dev/_codex-brug-autostart/CLAUDE.md:166) zijn bijgewerkt.
+
+**Controle:** de gevraagde suite eindigt groen: 150 tests, 23 overgeslagen. Daarvan konden **21 `test_brug.BrugTests` met een loopbackpoort** hier niet draaien; Claude moet die buiten de sandbox uitvoeren. De overige twee zijn Windows-tests. `bash -n` op alle `.sh` en `git diff --check` zijn schoon.
+
+Bewuste keuze: `reserve.<pid>.json` laat meerdere reserves toe; stopsignalen geven consequent exitcode 130.

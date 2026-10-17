@@ -22,6 +22,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from brug import lokaal_adres
+
 BASIS = Path(__file__).resolve().parent
 RUNS = BASIS / "runs"
 
@@ -152,17 +154,27 @@ def stop_proces(proc) -> None:
     Linux is het een Node-script dat hetzelfde doet. Alleen de ouder doden laat dat
     kind draaien. Altijd op PID of procesgroep, nooit op procesnaam.
     """
-    if proc is None or proc.poll() is not None:
+    if proc is None:
         return
     if os.name == "nt":
+        if proc.poll() is not None:
+            return
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                        capture_output=True, text=True)
     else:
         # _draai start elk kind met een eigen sessie, dus de groep is precies die boom.
+        # Een niet-opgeruimde leider houdt zijn groepsnummer bezet, ook als hij zombie is.
+        if proc.returncode is not None:
+            return
         try:
             os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            proc.kill()
+        except ProcessLookupError:
+            # Ook externe callers kunnen een proces zonder eigen sessie registreren.
+            if proc.returncode is None:
+                proc.kill()
+        except PermissionError:
+            if proc.returncode is None:
+                proc.kill()
 
 
 import urllib.error
@@ -278,17 +290,25 @@ def _draai(cmd: list, invoer: str, timeout: float, registreer, werkmap=None,
         text=True, encoding="utf-8", errors="replace",
         cwd=str(werkmap) if werkmap else None, env=omgeving(cmd, soort),
         start_new_session=(os.name != "nt"))
-    if registreer:
-        registreer(proc)
     try:
+        if registreer:
+            registreer(proc)
         wachttijd = (min(timeout, max(0, deadline - time.monotonic()))
                      if deadline is not None else timeout)
         if wachttijd <= 0:
             raise subprocess.TimeoutExpired(cmd, timeout)
         uit, fout = proc.communicate(invoer, timeout=wachttijd)
-    except subprocess.TimeoutExpired:
+    except BaseException:
         stop_proces(proc)
-        proc.communicate()
+        try:
+            proc.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            # Een afgescheiden kleinkind kan nog een uitvoerpijp openhouden.
+            # De gestopte ouder mag het overleg dan niet onbeperkt vasthouden.
+            for pijp in (proc.stdin, proc.stdout, proc.stderr):
+                if pijp is not None:
+                    pijp.close()
+            proc.wait(timeout=1)
         raise
     finally:
         if registreer:
@@ -339,6 +359,8 @@ class GeminiFout(RuntimeError):
 
 
 def _antigravity_rpc(adres: str, token: str, methode: str, payload: dict, timeout: float = 15.0) -> dict:
+    if not lokaal_adres(adres):
+        raise GeminiFout("Antigravity: ongeldig lokaal adres")
     url = f"http://{adres}/exa.language_server_pb.LanguageServerService/{methode}"
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -350,12 +372,18 @@ def _antigravity_rpc(adres: str, token: str, methode: str, payload: dict, timeou
         },
         method="POST",
     )
+    class GeenOmleiding(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), GeenOmleiding())
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with opener.open(req, timeout=timeout) as r:
             inhoud = r.read().decode("utf-8", errors="replace").strip()
             return json.loads(inhoud) if inhoud else {}
     except urllib.error.HTTPError as e:
         code = e.code if isinstance(e.code, int) else "onbekend"
+        e.close()
         raise GeminiFout(f"Antigravity {methode} HTTP {code}") from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise GeminiFout(f"Antigravity {methode}: verbinding mislukt") from None

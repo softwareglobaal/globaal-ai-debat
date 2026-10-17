@@ -7,9 +7,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import debat
 import opdracht
@@ -54,6 +56,68 @@ class VreemdeWebsite(unittest.TestCase):
     def test_pagina_stuurt_elke_post_als_json(self):
         pagina = (debat.BASIS / "pagina.html").read_text(encoding="utf-8")
         self.assertNotIn('{ method: "POST" }', pagina)
+
+    def test_nu_stoppen_kan_proces_niet_tijdens_signaal_afmelden(self):
+        proc = object()
+        in_stop = threading.Event()
+        laat_door = threading.Event()
+        afgemeld = threading.Event()
+        antwoorden = []
+        with web.LOCK:
+            oud_proc = web.HUIDIG["proc"]
+            oud_stop = web.STAAT["stop_gevraagd"]
+            web.HUIDIG["proc"] = proc
+            web.STAAT["stop_gevraagd"] = False
+
+        def trage_stop(lopend):
+            self.assertIs(lopend, proc)
+            in_stop.set()
+            self.assertTrue(laat_door.wait(3), "stop bleef hangen")
+
+        stopdraad = afmelddraad = None
+        try:
+            with mock.patch.object(debat, "stop_proces", side_effect=trage_stop):
+                stopdraad = threading.Thread(target=lambda: antwoorden.append(
+                    web.app.test_client().post("/api/stop", json={},
+                                               headers={"Host": "127.0.0.1:8099"})))
+                stopdraad.start()
+                self.assertTrue(in_stop.wait(3), "stop werd niet aangeroepen")
+                afmelddraad = threading.Thread(target=lambda: (
+                    web.registreer_proces(None), afgemeld.set()))
+                afmelddraad.start()
+                self.assertFalse(afgemeld.wait(0.1), "proces werd vóór het signaal afgemeld")
+                laat_door.set()
+                stopdraad.join(timeout=3)
+                afmelddraad.join(timeout=3)
+            self.assertFalse(stopdraad.is_alive())
+            self.assertFalse(afmelddraad.is_alive())
+            self.assertEqual([antwoord.status_code for antwoord in antwoorden], [200])
+        finally:
+            laat_door.set()
+            if stopdraad is not None:
+                stopdraad.join(timeout=3)
+            if afmelddraad is not None:
+                afmelddraad.join(timeout=3)
+            with web.LOCK:
+                web.HUIDIG["proc"] = oud_proc
+                web.STAAT["stop_gevraagd"] = oud_stop
+
+    def test_late_registratie_stopt_onder_hetzelfde_slot(self):
+        proc = object()
+        with web.LOCK:
+            oud_proc = web.HUIDIG["proc"]
+            oud_stop = web.STAAT["stop_gevraagd"]
+            web.HUIDIG["proc"] = None
+            web.STAAT["stop_gevraagd"] = True
+        try:
+            with mock.patch.object(debat, "stop_proces",
+                                   side_effect=lambda lopend: self.assertTrue(web.LOCK.locked())) as stop:
+                web.registreer_proces(proc)
+                stop.assert_called_once_with(proc)
+        finally:
+            with web.LOCK:
+                web.HUIDIG["proc"] = oud_proc
+                web.STAAT["stop_gevraagd"] = oud_stop
 
 
 class GitignoreInBriefing(unittest.TestCase):
@@ -138,6 +202,14 @@ class Stoppen(unittest.TestCase):
                 time.sleep(0.05)
             os.kill(kind, 9)
             self.fail("kleinkind leeft nog na stop_proces")
+
+    def test_opgeruimde_leider_krijgt_geen_groepssignaal(self):
+        proc = subprocess.Popen([sys.executable, "-c", "pass"],
+                                start_new_session=True)
+        proc.wait(timeout=3)
+        with mock.patch.object(debat.os, "killpg") as killpg:
+            debat.stop_proces(proc)
+            killpg.assert_not_called()
 
     @staticmethod
     def _draai_stil(cmd, gevangen):

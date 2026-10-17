@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Eén keer per dag starten in Terminal > New Terminal van Antigravity.
+# Antigravity start dit normaal als sidecar; handmatig kan via zijn Terminal.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

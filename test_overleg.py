@@ -4,12 +4,16 @@
 """
 
 import io
+import http.server
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
@@ -17,7 +21,9 @@ from pathlib import Path
 from unittest import mock
 
 import debat
+import brug
 import overleg
+import ronde
 
 
 HIER = Path(__file__).parent
@@ -101,6 +107,98 @@ class Overleg(unittest.TestCase):
             wrapper.write_text(f'#!/bin/sh\nexec "$STUB_PYTHON" "${script_variabele}" "$@"\n', encoding="utf-8")
             wrapper.chmod(0o755)
         return wrapper
+
+    @unittest.skipUnless(os.name == "posix", "signalen en procesgroepen vereisen POSIX")
+    def test_sigterm_en_sighup_stoppen_lopende_codex(self):
+        stub = self.map / "codex_wacht.py"
+        stub.write_text(
+            "import os, time\nfrom pathlib import Path\n"
+            "Path(os.environ['STUB_SIGNAL_PID']).write_text(str(os.getpid()))\n"
+            "time.sleep(1.2)\n"
+            "Path(os.environ['STUB_SIGNAL_MARKER']).write_text('loopt nog')\n"
+            "time.sleep(30)\n", encoding="utf-8")
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signaal=sig.name):
+                pidpad = self.map / f"codex-{sig.name}.pid"
+                marker = self.map / f"codex-{sig.name}.marker"
+                env = {**self.env, "GEMINI_AGENTAPI": str(self.gemini),
+                       "STUB_CODEX_SCRIPT": str(stub),
+                       "STUB_SIGNAL_PID": str(pidpad), "STUB_SIGNAL_MARKER": str(marker)}
+                proces = subprocess.Popen(
+                    [sys.executable, str(HIER / "overleg.py"), "-C", str(self.werkmap),
+                     "-o", str(self.rapport), "--runs", str(self.runs), "-b", "1"],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, env=env, start_new_session=True)
+                try:
+                    proces.stdin.write("Onderzoek de afspraak.\n")
+                    proces.stdin.close()
+                    proces.stdin = None
+                    einde = time.monotonic() + 5
+                    while not pidpad.exists() and proces.poll() is None and time.monotonic() < einde:
+                        time.sleep(0.02)
+                    self.assertTrue(pidpad.exists(), "Codex-stub startte niet")
+                    os.kill(proces.pid, sig)
+                    _, fout = proces.communicate(timeout=7)
+                    self.assertIn(proces.returncode, (130, 143), fout)
+                    time.sleep(1.3)
+                    self.assertFalse(marker.exists(), "Codex draaide door na het stopsignaal")
+                finally:
+                    if proces.poll() is None:
+                        os.killpg(proces.pid, signal.SIGKILL)
+                    proces.communicate(timeout=3)
+                    if pidpad.exists():
+                        try:
+                            os.killpg(int(pidpad.read_text()), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+
+    @unittest.skipUnless(os.name == "posix", "signalen vereisen POSIX")
+    def test_sigterm_gevolgd_door_sighup_onderbreekt_opruiming_niet(self):
+        begonnen = self.map / "overleg-begonnen"
+        opruiming = self.map / "overleg-opruiming"
+        afgerond = self.map / "overleg-opgeruimd"
+        driver = self.map / "overleg_dubbel_signaal.py"
+        driver.write_text(
+            "import sys, time\nfrom pathlib import Path\n"
+            f"sys.path.insert(0, {str(HIER)!r})\n"
+            "import overleg\n"
+            "def nep_overleg(**_):\n"
+            f"    Path({str(begonnen)!r}).write_text('begonnen')\n"
+            "    try:\n"
+            "        time.sleep(30)\n"
+            "    finally:\n"
+            f"        Path({str(opruiming)!r}).write_text('bezig')\n"
+            "        time.sleep(1)\n"
+            f"        Path({str(afgerond)!r}).write_text('klaar')\n"
+            "overleg.draai_overleg = nep_overleg\n"
+            f"sys.exit(overleg.main(['-C', {str(self.werkmap)!r}, "
+            f"'-o', {str(self.rapport)!r}]))\n",
+            encoding="utf-8")
+        proces = subprocess.Popen(
+            [sys.executable, str(driver)], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=self.env, start_new_session=True)
+        try:
+            proces.stdin.write("Onderzoek de afspraak.\n")
+            proces.stdin.close()
+            proces.stdin = None
+            einde = time.monotonic() + 5
+            while not begonnen.exists() and proces.poll() is None and time.monotonic() < einde:
+                time.sleep(0.01)
+            self.assertTrue(begonnen.exists(), "nep-overleg startte niet")
+            os.kill(proces.pid, signal.SIGTERM)
+            einde = time.monotonic() + 5
+            while not opruiming.exists() and proces.poll() is None and time.monotonic() < einde:
+                time.sleep(0.01)
+            self.assertTrue(opruiming.exists(), "opruiming begon niet")
+            os.kill(proces.pid, signal.SIGHUP)
+            _, fout = proces.communicate(timeout=5)
+            self.assertEqual(proces.returncode, 130, fout)
+            self.assertTrue(afgerond.exists(), "SIGHUP brak de opruiming af")
+        finally:
+            if proces.poll() is None:
+                os.killpg(proces.pid, signal.SIGKILL)
+            proces.communicate(timeout=3)
 
     def python(self, *opties, env=None):
         return subprocess.run(
@@ -257,7 +355,7 @@ class Overleg(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=True):
             with mock.patch.object(debat, "BRAIN_DIR", self.brain):
                 with mock.patch.object(overleg, "roep_codex_in_map", return_value="Codex analyse"):
-                    with mock.patch.object(debat.urllib.request, "urlopen", side_effect=fout):
+                    with mock.patch.object(debat.urllib.request.OpenerDirector, "open", side_effect=fout):
                         with redirect_stderr(stderr):
                             code = overleg.draai_overleg(self.werkmap, self.rapport, "Test", "Opdracht", rondes=1)
         self.assertEqual(code, 1)
@@ -407,6 +505,159 @@ class Overleg(unittest.TestCase):
 
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "overleg.sh vereist bash")
+@unittest.skipUnless(os.name == "posix", "procesgroepen vereisen POSIX")
+class AntigravityRpcBeveiliging(unittest.TestCase):
+    def test_ongeldige_adressen_worden_geweigerd_zonder_verzoek(self):
+        for adres in ("example.com:80", "127.0.0.1:80/pad",
+                      "gebruiker@localhost:80", "[::1]:80/pad"):
+            with self.subTest(adres=adres), \
+                    mock.patch.object(debat.urllib.request, "build_opener") as opener:
+                with self.assertRaises(debat.GeminiFout) as fout:
+                    debat._antigravity_rpc(adres, "nep", "Heartbeat", {})
+                self.assertNotIn(adres, str(fout.exception))
+                opener.assert_not_called()
+
+    def test_proxy_en_omleiding_kunnen_token_niet_meenemen(self):
+        toestand = {"bezoeken": 0, "code": 200, "token": None}
+
+        class NepServer(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                # Eerst de body lezen: een ongelezen body laat de server de verbinding met RST
+                # sluiten, en dan faalt de RPC af en toe met "verbinding mislukt".
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                toestand["bezoeken"] += 1
+                toestand["token"] = self.headers.get("x-codeium-csrf-token")
+                self.send_response(toestand["code"])
+                if toestand["code"] == 302:
+                    self.send_header("Location", f"http://127.0.0.1:{server.server_port}/omleiding")
+                self.send_header("Content-Length", "2" if toestand["code"] == 200 else "0")
+                self.end_headers()
+                if toestand["code"] == 200:
+                    self.wfile.write(b"{}")
+
+            def log_message(self, *args):
+                pass
+
+        try:
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), NepServer)
+        except PermissionError as exc:
+            if os.environ.get("CI"):
+                raise
+            self.skipTest(f"loopbackpoort geblokkeerd: {exc}")
+        draad = threading.Thread(target=server.serve_forever, daemon=True)
+        draad.start()
+        try:
+            adres = f"127.0.0.1:{server.server_port}"
+            with mock.patch.dict(os.environ, {"HTTP_PROXY": "http://127.0.0.1:1",
+                                              "NO_PROXY": "", "no_proxy": ""}):
+                self.assertEqual(debat._antigravity_rpc(adres, "nep", "Heartbeat", {}), {})
+                self.assertEqual((toestand["bezoeken"], toestand["token"]), (1, "nep"))
+                toestand["code"] = 302
+                with self.assertRaisesRegex(debat.GeminiFout, "HTTP 302"):
+                    debat._antigravity_rpc(adres, "nep", "Heartbeat", {})
+                self.assertEqual(toestand["bezoeken"], 2, "RPC volgde de omleiding")
+        finally:
+            server.shutdown()
+            server.server_close()
+            draad.join(timeout=2)
+
+
+class DebatProcesOpruiming(unittest.TestCase):
+    def test_keyboardinterrupt_bij_registratie_stopt_kind_en_kleinkind(self):
+        with tempfile.TemporaryDirectory() as tijdelijk:
+            basis = Path(tijdelijk)
+            pidpad = basis / "kleinkind.pid"
+            marker = basis / "kleinkind.leeft"
+            kleinkind = (
+                "import time; from pathlib import Path; "
+                f"time.sleep(1.2); Path({str(marker)!r}).write_text('loopt nog'); "
+                "time.sleep(30)"
+            )
+            ouder = (
+                "import subprocess, sys, time; "
+                f"kind = subprocess.Popen([sys.executable, '-c', {kleinkind!r}]); "
+                f"open({str(pidpad)!r}, 'w').write(str(kind.pid)); "
+                "time.sleep(30)"
+            )
+            gestart = {}
+
+            def registreer(proces):
+                if proces is None:
+                    return
+                gestart["proces"] = proces
+                einde = time.monotonic() + 5
+                while not pidpad.exists() and time.monotonic() < einde:
+                    time.sleep(0.02)
+                self.assertTrue(pidpad.exists(), "kleinkind startte niet")
+                raise KeyboardInterrupt
+
+            try:
+                with self.assertRaises(KeyboardInterrupt):
+                    debat._draai([sys.executable, "-c", ouder], "", 10, registreer)
+                time.sleep(1.3)
+                self.assertFalse(marker.exists(), "kleinkind draaide door na KeyboardInterrupt")
+            finally:
+                proces = gestart.get("proces")
+                if proces is not None:
+                    try:
+                        os.killpg(proces.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    proces.communicate(timeout=3)
+
+    def test_afgescheiden_kleinkind_met_open_uitvoerpijp_blokkeert_niet(self):
+        with tempfile.TemporaryDirectory() as tijdelijk:
+            pidpad = Path(tijdelijk) / "afgescheiden.pid"
+            ouder = (
+                "import subprocess, sys, time; "
+                "kind = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+                "start_new_session=True); "
+                f"open({str(pidpad)!r}, 'w').write(str(kind.pid)); "
+                "time.sleep(30)"
+            )
+            gestart = {}
+            uitkomst = {}
+
+            def registreer(proces):
+                if proces is None:
+                    return
+                gestart["proces"] = proces
+                einde = time.monotonic() + 5
+                while not pidpad.exists() and time.monotonic() < einde:
+                    time.sleep(0.02)
+                self.assertTrue(pidpad.exists(), "afgescheiden kleinkind startte niet")
+                raise KeyboardInterrupt
+
+            def draai():
+                try:
+                    debat._draai([sys.executable, "-c", ouder], "", 10, registreer)
+                except BaseException as exc:
+                    uitkomst["fout"] = exc
+
+            draad = threading.Thread(target=draai, daemon=True)
+            begin = time.monotonic()
+            draad.start()
+            draad.join(timeout=3)
+            bleef_hangen = draad.is_alive()
+            duur = time.monotonic() - begin
+            try:
+                self.assertFalse(bleef_hangen, "communicate bleef op de uitvoerpijp wachten")
+                self.assertIsInstance(uitkomst.get("fout"), KeyboardInterrupt)
+                self.assertLess(duur, 3)
+            finally:
+                if pidpad.exists():
+                    try:
+                        os.kill(int(pidpad.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                proces = gestart.get("proces")
+                if proces is not None and proces.poll() is None:
+                    os.killpg(proces.pid, signal.SIGKILL)
+                draad.join(timeout=3)
+                if proces is not None:
+                    proces.wait(timeout=3)
+
+
 class OverlegSh(unittest.TestCase):
     setUp = Overleg.setUp
     maak_programma = Overleg.maak_programma
@@ -470,6 +721,152 @@ class OverlegSh(unittest.TestCase):
         uit = self.shell("-C", str(self.werkmap), "-o", str(self.rapport), env=env)
         self.assertEqual(uit.returncode, 2, uit.stderr)
         self.assertIn("Gemini agentapi niet gevonden", uit.stderr)
+
+
+@unittest.skipUnless(os.name == "posix", "overleg.sh en levende pid vereisen POSIX")
+class DoorsturenViaBrug(unittest.TestCase):
+    RAPPORT = "RAPPORT VIA BRUG\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / "thuis"
+        self.home.mkdir()
+        self.basis = self.home / "brug"
+        self.werkmap = self.home / "werk"
+        self.werkmap.mkdir()
+        self.rapport = self.home / "uit" / "rapport.md"
+        self.runs = self.home / "runs"
+        self.env = {**os.environ, "HOME": str(self.home), "USERPROFILE": str(self.home),
+                    "OVERLEG_BRUG_MAP": str(self.basis), "AI_DEBAT": str(HIER),
+                    "CODEX_SH_PY": sys.executable, "CODEX_SH_RUNS": str(self.runs)}
+        for naam in ("ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_CSRF_TOKEN",
+                     "GEMINI_AGENTAPI", "GEMINI_BRAIN_DIR"):
+            self.env.pop(naam, None)
+        self.jobs = []
+        self.stub_fout = None
+        self.stophartslag = threading.Event()
+        self.draad = None
+        oude_runs = debat.RUNS
+        debat.RUNS = self.runs
+        self.addCleanup(setattr, debat, "RUNS", oude_runs)
+        self.addCleanup(self.stop_stub)
+
+    def start_stub(self):
+        brug.maak_mappen(self.basis)
+
+        def loop():
+            try:
+                while not self.stophartslag.is_set():
+                    brug.schrijf_json(self.basis / "hartslag.json", {
+                        "pid": os.getpid(), "starttijd": "2026-10-17T12:00:00Z",
+                        "laatste_tik": time.time(), "versie": 2, "bron": "sidecar"})
+                    taak_id = brug.claim_oudste(self.basis)
+                    if taak_id:
+                        jobpad = self.basis / "bezig" / f"{taak_id}.json"
+                        gegevens = json.loads(jobpad.read_text(encoding="utf-8"))
+                        self.jobs.append(gegevens)
+                        rapport = Path(gegevens["rapport"])
+                        rapport.parent.mkdir(parents=True, exist_ok=True)
+                        rapport.write_text(self.RAPPORT, encoding="utf-8")
+                        naam = ronde.nieuw(gegevens["titel"], gegevens["opdracht"],
+                                          project=gegevens["werkmap"], rapport=str(rapport),
+                                          naambestand=str(rapport) + ".ronde")
+                        ronde.voeg_toe(ronde.run_pad(naam), "codex", "controle", self.RAPPORT)
+                        statuspad = brug._statuspad(self.basis / "bezig", taak_id)
+                        brug.schrijf_json(statuspad, brug._status(
+                            taak_id, "klaar", exitcode=0, rapport=str(rapport)))
+                        os.replace(jobpad, self.basis / "klaar" / jobpad.name)
+                        os.replace(statuspad, brug._statuspad(self.basis / "klaar", taak_id))
+                    self.stophartslag.wait(0.05)
+            except Exception as exc:
+                self.stub_fout = exc
+
+        self.draad = threading.Thread(target=loop, daemon=True)
+        self.draad.start()
+        einde = time.monotonic() + 3
+        while not brug.brug_leeft(self.basis):
+            self.assertLess(time.monotonic(), einde, "nep-brug startte niet")
+            time.sleep(0.01)
+
+    def stop_stub(self):
+        self.stophartslag.set()
+        if self.draad:
+            self.draad.join(timeout=2)
+
+    def shell(self, *args, opdracht="Onderzoek de afspraak.\n"):
+        return subprocess.run(["/bin/bash", str(HIER / "overleg.sh"), *args],
+                              input=opdracht, capture_output=True, text=True,
+                              env=self.env, timeout=10)
+
+    def python(self, *args, opdracht="Onderzoek de afspraak.\n"):
+        uit, fout = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch("sys.stdin", io.StringIO(opdracht)), \
+                redirect_stdout(uit), redirect_stderr(fout):
+            code = overleg.main(["-C", str(self.werkmap), "-o", str(self.rapport), *args])
+        return code, uit.getvalue(), fout.getvalue()
+
+    def controleer_job(self, titel, opdracht, beurten, model, timeout):
+        self.assertIsNone(self.stub_fout)
+        self.assertEqual(len(self.jobs), 1)
+        job = self.jobs[0]
+        self.assertEqual(job["werkmap"], str(self.werkmap.resolve()))
+        self.assertEqual(job["titel"], titel)
+        self.assertEqual(job["opdracht"], opdracht)
+        self.assertEqual(job["opties"]["b"], beurten)
+        self.assertEqual(job["opties"]["g"], model)
+        self.assertEqual(job["opties"]["T"], timeout)
+
+    def test_shell_stuurt_precies_een_opdracht_door(self):
+        self.start_stub()
+        opdracht = "Onderzoek deze afspraak.\n"
+        uit = self.shell("-C", str(self.werkmap), "-o", str(self.rapport),
+                         "-t", "Brugcontrole", "-b", "3", "-g", "gemini-3.8-flash",
+                         "-T", "30", opdracht=opdracht)
+        self.assertEqual(uit.returncode, 0, uit.stderr)
+        self.assertIn(self.RAPPORT, uit.stdout)
+        self.controleer_job("Brugcontrole", opdracht, 3, "gemini-3.8-flash", 30)
+
+    def test_python_stuurt_precies_een_opdracht_door(self):
+        self.start_stub()
+        code, uit, fout = self.python("-t", "Pythonbrug", "-b", "2",
+                                     "-g", "gemini-3.8-flash", "-T", "30")
+        self.assertEqual(code, 0, fout)
+        self.assertIn(self.RAPPORT, uit)
+        self.controleer_job("Pythonbrug", "Onderzoek de afspraak.", 2,
+                            "gemini-3.8-flash", 30)
+
+    def test_zonder_hartslag_en_met_verlopen_hartslag_geen_wachtrij(self):
+        for verlopen in (False, True):
+            with self.subTest(verlopen=verlopen):
+                if verlopen:
+                    brug.maak_mappen(self.basis)
+                    brug.schrijf_json(self.basis / "hartslag.json", {
+                        "pid": os.getpid(), "starttijd": "2026-10-17T12:00:00Z",
+                        "laatste_tik": time.time() - 61, "versie": 1})
+                uit = self.shell("-C", str(self.werkmap), "-o", str(self.rapport),
+                                 "-t", "Geen brug", "-T", "30")
+                self.assertEqual(uit.returncode, 2)
+                self.assertIn("Gemini-toegang ontbreekt", uit.stderr)
+                code, _, fout = self.python("-t", "Geen brug", "-T", "30")
+                self.assertEqual(code, 2)
+                self.assertIn("Gemini-toegang ontbreekt", fout)
+                wachtrij = self.basis / "wachtrij"
+                self.assertFalse(list(wachtrij.glob("*.json")) if wachtrij.exists() else [])
+
+    def test_shell_zelftest_via_brug_en_verwerking(self):
+        self.start_stub()
+        uit = self.shell("--zelftest")
+        self.assertEqual(uit.returncode, 0, uit.stderr)
+        self.assertIn("zelftest geslaagd", uit.stdout)
+        self.assertIsNone(self.stub_fout)
+        self.assertEqual(len(self.jobs), 1)
+        naam = next(self.runs.iterdir()).name
+        board = [json.loads(regel) for regel in (self.runs / naam / "board.jsonl")
+                 .read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([beurt["soort"] for beurt in board],
+                         ["opdracht", "controle", "verwerking"])
 
 
 if __name__ == "__main__":

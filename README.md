@@ -106,9 +106,10 @@ codex.sh --zelftest
 `ronde.py` schrijft de runs weg in hetzelfde formaat als een debat. Zo staat al het werk van
 Claude en Codex samen op één plek.
 
-Voor overleg met Codex én Gemini gebruik je `overleg.sh` vanuit de **Terminal van
-Antigravity** (`Terminal > New Terminal`). Het schrijft hun beurten en de gezamenlijke
-eindconclusie in het dashboard en in het rapport:
+Voor overleg met Codex én Gemini gebruik je `overleg.sh`. Buiten Antigravity stuurt het
+automatisch via de draaiende brug door; anders gebruik je de **Terminal van Antigravity**
+(`Terminal > New Terminal`). Het schrijft hun beurten en de gezamenlijke eindconclusie
+in het dashboard en in het rapport:
 
 ```
 overleg.sh -C <map> -o <rapport.md> [-t "<titel>"] [-b 2] [-m codex-model] [-e niveau] [-g pro|flash|flash_lite] [-T seconden] < opdracht.md
@@ -121,11 +122,26 @@ voegt Claude zijn slotbeurt aan dezelfde ronde toe.
 
 ### Overleg-brug
 
-Mehdi start eenmaal per dag in de Terminal van Antigravity: `~/dev/globaal-ai-debat/brug.sh`.
-Het venster blijft open. Claude kan daarna een read-only overleg indienen met
+Eenmalig draait Antigravity zelf `~/dev/globaal-ai-debat/installeer_sidecar.sh` (Mehdi vraagt
+het in gewone taal) en zet Mehdi zo nodig `overleg-brug` aan in Antigravity > Automations. Antigravity start en bewaakt daarna de
+brug als sidecar, ook na een herstart. De installateur wacht maximaal 60 seconden op een
+levende sidecar. Staat die als reserve klaar achter een oude terminal-luisteraar zonder
+lopende taak, dan stopt de installateur die oude luisteraar netjes en wacht op de overname.
+Met `--laat-staan` blijft de terminal-luisteraar draaien; met `--niet-wachten` toont de
+installateur direct de huidige status. Bij een lopende taak neemt de reserve over zodra
+de terminal-luisteraar later stopt. Een luisteraar met verouderde toegang stopt zelf.
+Als handmatige terugval kan `brug.sh` in de Terminal van Antigravity draaien.
+
+Claude kan daarna een read-only overleg indienen met
 `python brug.py indienen -C <map> -o <rapport.md> -t "<titel>" --wacht < opdracht.md`;
-`python brug.py status` toont de hartslag en wachtrij. De brug bewaart opdrachten onder
+`python brug.py status` toont de hartslag, een eventuele reserve en de wachtrij. De brug bewaart opdrachten onder
 `~/.overleg-brug/` en aanvaardt alleen de vaste overlegopties, nooit vrije commando's.
+Elke reserve schrijft zijn eigen `reserve.<pid>.json` en probeert het luisterslot elke
+halve seconde. Een wachtende indiener blijft een geclaimde taak volgen tijdens overname;
+een taak die zonder levende luisteraar of reserve nog in de wachtrij ligt, wordt
+ingetrokken. Na een harde stop krijgt een achtergebleven taak bij de volgende slotname
+een foutstatus. `SIGTERM`, `SIGHUP` en Ctrl+C stoppen een lopend overleg netjes; de
+taak krijgt exitcode 130, en een verouderde luisteraar exitcode 3.
 Het Antigravity-adres en de sleutel blijven in de omgeving van de luisteraar en gaan
 alleen mee naar zijn kindproces `overleg.sh`.
 

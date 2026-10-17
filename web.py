@@ -96,9 +96,8 @@ def registreer_proces(proc):
     # hier alsnog afschieten. Beide kanten lezen onder LOCK, dus een van de twee ziet het.
     with LOCK:
         HUIDIG["proc"] = proc
-        te_laat = proc is not None and STAAT["stop_gevraagd"]
-    if te_laat:
-        debat.stop_proces(proc)
+        if proc is not None and STAAT["stop_gevraagd"]:
+            debat.stop_proces(proc)
 
 
 def voeg_beurt_toe(beurt, run_dir):
@@ -439,10 +438,9 @@ def api_start():
 @app.post("/api/stop")
 def api_stop():
     """Breekt de lopende beurt direct af. Die halve beurt gaat verloren."""
-    zet(stop_gevraagd=True)
     with LOCK:
-        proc = HUIDIG["proc"]
-    debat.stop_proces(proc)
+        STAAT["stop_gevraagd"] = True
+        debat.stop_proces(HUIDIG["proc"])
     return jsonify({"ok": True})
 
 

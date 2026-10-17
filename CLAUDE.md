@@ -163,6 +163,27 @@ Meld aan de gebruiker welke modellen werken, en waar de app staat.
   `~/.claude/tools/codex.sh` (een symlink naar `codex.sh` hier). Elke ronde komt via `ronde.py`
   als run in `runs/` en dus in het dashboard. Werkafspraken: Prive met Claude, "Werkafspraken
   Claude en Codex", hoogste versie.
+- **De overleg-brug start als sidecar van Antigravity.** Installeer eenmalig met
+  `installeer_sidecar.sh` en zet `overleg-brug` zo nodig aan in Antigravity > Automations.
+  De installateur wacht maximaal 60 s op een levende sidecar, als hoofd of reserve.
+  Een reserve schrijft `reserve.<pid>.json`, probeert het slot elke 0,5 s en houdt de
+  voorcontrole levend tijdens overname. Staat een oude terminal-luisteraar zonder
+  lopende taak in de weg, dan pauzeert de installateur hem met `STOP`, controleert opnieuw
+  dezelfde PID, opdrachtregel en lege `wachtrij/` en `bezig/`, en stuurt pas dan `INT` + `CONT`.
+  Een onderbroken installateur hervat een gepauzeerde luisteraar altijd;
+  `--laat-staan` slaat dit over en `--niet-wachten` toont direct de status. Een luisteraar
+  stopt zelf bij verouderde toegang of een verdwenen ouder (exitcode 3). `SIGTERM`,
+  `SIGHUP` en Ctrl+C stoppen na de lopende bestandswissel; een lopende taak krijgt met
+  bewaarde log exitcode 130. Een opvolger bewaart een al geschreven eindstatus in `bezig/`;
+  alleen onafgeronde taken krijgen exitcode 3. Wachtende indieners herstellen een geclaimde
+  taak zelf als geen brug of reserve leeft en het luisterslot vrij is; ongeclaimde taken
+  worden dan ingetrokken. Heartbeat en Gemini-RPC sturen het token alleen naar loopback
+  met poort, zonder proxy of HTTP-omleiding.
+  Pas Antigravity's `config.json` nooit aan om een sidecar aan te zetten. Antigravity 2.x
+  voert `.vscode/tasks.json` niet uit.
+- **Nu stoppen deelt het processlot met registratie en afmelding.** `stop_proces` stuurt
+  alleen een groepssignaal zolang de procesleider nog niet is opgeruimd; een zombie houdt
+  zijn groepsnummer nog bezet. Roep hiervoor geen `poll()` aan.
 - **`innerHTML` krijgt alleen vaste tekst.** Alles uit een run (titels, sprekers,
   bestandsnamen uit een diff, antwoorden) gaat via `textContent`; `+=`, `outerHTML`,
   `insertAdjacentHTML` en `document.write` zijn verboden. `test_ronde.py` bewaakt het.
@@ -194,6 +215,7 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | accenten worden vreemde tekens in de console | Windows-console is geen UTF-8 | `debat.py` zet stdout op UTF-8; bestanden altijd met `encoding="utf-8"` |
 | Codex draait door na een signaal aan `codex.sh` | python startte via een shellwrapper (pyenv, asdf): `$!` is de wrapper, Codex zit in een andere groep | de starter schrijft na `setsid` zijn pid (= groep) naar een tijdelijk bestand; de val stopt die groep (Codex-controle 3, D14) |
 | halve ronde of FOUT als eerste beurt na een onderbreking | de ronde was zichtbaar voor ze af was | `ronde.nieuw` reserveert de naam met `mkdir` en zet `board.jsonl` er als laatste in met `os.replace`; zonder `board.jsonl` is een ronde onzichtbaar. Resten van een harde stop: `python ronde.py resten [--weg]` (Codex-controles 3 en 4) |
+| overleg blijft op een oude luisteraar hangen na een herstart van Antigravity | de luisteraar heeft oude toegangsgegevens | de sidecar start een verse luisteraar; de oude stopt zelf met exitcode 3 en ruimt hartslag en slot op |
 
 ## Bestanden
 
@@ -213,9 +235,10 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | `test_ronde.py` | rondes, padcontrole, slot (gelijktijdig, traag, gecrasht), een uitkomst, HTML-grendel; ook in CI |
 | `test_codex_sh.py` | `codex.sh` met een nep-Codex: invoer, foutcodes, onderbreken; macOS en Linux in CI |
 | `test_meting.py` | tests door de app, opdrachtstroom zonder ChatGPT, resultaat, standpunt, vonnis, API-sleutel, briefingcontrole; met nagebootste modellen; ook in CI |
-| `overleg.py` en `overleg.sh` | driehoeksoverleg met Codex en Gemini; start vanuit de Terminal van Antigravity |
+| `overleg.py` en `overleg.sh` | driehoeksoverleg met Codex en Gemini; stuurt buiten Antigravity automatisch via de draaiende brug door |
 | `test_overleg.py` | toegang, timeout en volledige overlegstroom met nagebootste modellen; ook in CI |
-| `brug.py` en `brug.sh` | lokale wachtrij en luisteraar voor read-only overleg; start `~/dev/globaal-ai-debat/brug.sh` in Antigravity, de sleutel blijft daar |
+| `brug.py` en `brug.sh` | lokale wachtrij en luisteraar voor read-only overleg; de Antigravity-sidecar start `brug.sh` en bewaakt de toegang |
+| `installeer_sidecar.sh` | installeert of verwijdert alleen de Antigravity-sidecar `overleg-brug`; activeren gebeurt in Automations |
 | `test_brug.py` | wachtrij, toetsing, slot, hartslag, geheimen en tijdslimiet met een nep-overleg; ook in CI |
 | `docs/codex/` | opdracht, antwoord en verwerking van de Codex-rondes over deze repo |
 | `start.command` | macOS: dubbelklik in Finder |
