@@ -158,6 +158,8 @@ class Overleg(unittest.TestCase):
                 self.assertIn("geheel getal groter dan 0", fout.getvalue())
                 self.assertFalse(self.teller.exists())
 
+    @unittest.skipIf(os.name == "nt", "cmd.exe knipt een prompt van meerdere regels af in een .cmd-stub; "
+                     "agentapi bestaat alleen op macOS (Antigravity)")
     def test_volledige_ronde_met_stub_agentapi(self):
         env = {**self.env, "GEMINI_AGENTAPI": str(self.gemini)}
         uit = self.python("-b", "2", "-T", "37", env=env)
