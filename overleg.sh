@@ -1,19 +1,27 @@
 #!/bin/bash
-# overleg.sh v1.0 (17-10-2026) - de vaste manier waarop Claude met Codex EN Gemini samen in overleg gaat.
+# overleg.sh v1.1 (17-10-2026) - de vaste manier waarop Claude, Codex EN Gemini samen in overleg gaan.
 # Elke ronde komt met alle tussenbeurten in het dashboard van ai-debat (http://127.0.0.1:8099).
 # Bron: repo softwareglobaal/globaal-ai-debat; ~/.claude/tools/overleg.sh verwijst hierheen.
 #
 # Gebruik:
-#   overleg.sh -C <map> -o <rapport.md> [-t "<titel>"] [-b <diepte>] [-m codex-model] [-e niveau] [-g pro|flash|flash_lite] [-T seconden] < opdracht.md
+#   overleg.sh -C <map> -o <rapport.md> [-t "<titel>"] [-b <diepte>]
+#              [-m codex-model] [-e codex-niveau]
+#              [-g gemini-model] [-G gemini-niveau]
+#              [-c claude-model] [-E claude-niveau] [--met-claude]
+#              [-T seconden] < opdracht.md
 #   overleg.sh --verwerking <rapport.md> < verwerkt.md    Claude's verwerking als laatste beurt van die ronde
 #   overleg.sh --zelftest
-#   Gemini werkt alleen vanuit de Terminal van Antigravity: Terminal > New Terminal.
+#   Gemini werkt alleen vanuit de Terminal van Antigravity (Terminal > New Terminal): de toegang komt uit die terminal, niet uit de app.
 #
 # Standaard:
 #   -b 2                Codex analyseert -> Gemini analyseert + vult aan/corrigeert -> Codex trekt gezamenlijke eindconclusie.
 #   Beide adviseurs lezen alleen en wijzigen niets.
-#   -g pro              Gemini 4 Argon (Pro) via lokale Antigravity agentapi.
-#   -T 1200             Timeout per Codex- en Gemini-beurt, in seconden (> 0).
+#   -m / -e             Standaard uit ~/.codex/config.toml (bijv. gpt-6-sol / ultra of xhigh).
+#   -g gemini-4-argon   Gemini 4 Argon via lokale Antigravity LanguageServerService (ook: gemini-3.8-flash, pro, flash).
+#   -G high             Gemini denkniveau: high, medium of low.
+#   -c / -E             Claude-model en denkniveau (max, xhigh, high, medium, low); standaard uit actieve Claude-sessie.
+#   --met-claude        Laat Claude ook zelfstandig een overlegbeurt draaien via de CLI.
+#   -T 1200             Timeout per beurt, in seconden (> 0).
 # Uitvoer: volledig verslag + gezamenlijke eindconclusie in <rapport.md> en op stdout, rondenaam in <rapport.md>.ronde,
 # en alle beurten live in ~/dev/globaal-ai-debat/runs/.
 
@@ -30,7 +38,10 @@ fout() { echo "overleg.sh: $*" >&2; exit 2; }
 
 waarde() { [ "$1" -ge 2 ] || fout "$2 vraagt een waarde (zie --help)"; }
 
-MAP="" RAPPORT="" TITEL="" DIEPTE="2" MODEL="" NIVEAU="" GEMINI="pro" TIMEOUT="1200" ZELFTEST=0 VERWERK=""
+MAP="" RAPPORT="" TITEL="" DIEPTE="2" MODEL="" NIVEAU=""
+GEMINI="gemini-4-argon" GEMINI_NIVEAU="high"
+CLAUDE_MODEL="" CLAUDE_NIVEAU="" MET_CLAUDE=0
+TIMEOUT="1200" ZELFTEST=0 VERWERK=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -C) waarde $# "$1"; MAP="$2"; shift 2 ;;
@@ -40,7 +51,11 @@ while [ $# -gt 0 ]; do
     -m) waarde $# "$1"; MODEL="$2"; shift 2 ;;
     -e) waarde $# "$1"; NIVEAU="$2"; shift 2 ;;
     -g) waarde $# "$1"; GEMINI="$2"; shift 2 ;;
-    -T) waarde $# "$1"; TIMEOUT="$2"; shift 2 ;;
+    -G|--gemini-niveau) waarde $# "$1"; GEMINI_NIVEAU="$2"; shift 2 ;;
+    -c|--claude-model) waarde $# "$1"; CLAUDE_MODEL="$2"; shift 2 ;;
+    -E|--claude-niveau) waarde $# "$1"; CLAUDE_NIVEAU="$2"; shift 2 ;;
+    --met-claude) MET_CLAUDE=1; shift ;;
+    -T|--timeout) waarde $# "$1"; TIMEOUT="$2"; shift 2 ;;
     --verwerking) waarde $# "$1"; VERWERK="$2"; shift 2 ;;
     --zelftest) ZELFTEST=1; shift ;;
     -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
@@ -56,8 +71,10 @@ if [ -n "$VERWERK" ]; then
   exec "$CODEX_SH" --verwerking "$VERWERK"
 fi
 
-[[ "${ANTIGRAVITY_LS_ADDRESS:-}" =~ [^[:space:]] ]] || [[ "${GEMINI_AGENTAPI:-}" =~ [^[:space:]] ]] \
-  || fout "Gemini-toegang ontbreekt; start dit in de Terminal van Antigravity: Terminal > New Terminal"
+if ! [[ "${ANTIGRAVITY_LS_ADDRESS:-}" =~ [^[:space:]] ]] && ! [[ "${GEMINI_AGENTAPI:-}" =~ [^[:space:]] ]]; then
+  "$PY" -c "import sys; sys.path.insert(0, '$AI_DEBAT'); import debat; a, t = debat._antigravity_omgeving(); sys.exit(0 if (a and t) else 1)" 2>/dev/null \
+    || fout "Gemini-toegang ontbreekt; start dit in de Terminal van Antigravity: Terminal > New Terminal"
+fi
 
 [ -x "$AGENTAPI" ] || fout "Gemini agentapi niet gevonden op $AGENTAPI (is Antigravity geinstalleerd?)"
 
@@ -65,7 +82,7 @@ if [ "$ZELFTEST" = 1 ]; then
   T="$(mktemp -d "${TMPDIR:-/tmp}/overleg-zelftest.XXXXXX")"
   trap 'rm -rf "$T"' EXIT
   echo "Antwoord met precies een woord: KLAAR" \
-    | CODEX_SH_RUNS="$T/runs" "$0" -C "$T" -o "$T/antwoord.md" -t "zelftest-overleg" -b 1 -e low -g flash -T "$TIMEOUT" >/dev/null 2>&1 \
+    | CODEX_SH_RUNS="$T/runs" "$0" -C "$T" -o "$T/antwoord.md" -t "zelftest-overleg" -b 1 -e low -g gemini-3.8-flash -G low -T "$TIMEOUT" >/dev/null 2>&1 \
     || { echo "zelftest MISLUKT (overleg)" >&2; exit 1; }
   echo "zelftest verwerkt" | CODEX_SH_RUNS="$T/runs" "$0" --verwerking "$T/antwoord.md" >/dev/null 2>&1 \
     || { echo "zelftest MISLUKT (verwerking)" >&2; exit 1; }
@@ -82,5 +99,9 @@ EXTRA=()
 [ -n "$TITEL" ] && EXTRA+=(-t "$TITEL")
 [ -n "$MODEL" ] && EXTRA+=(-m "$MODEL")
 [ -n "$NIVEAU" ] && EXTRA+=(-e "$NIVEAU")
+[ -n "$GEMINI_NIVEAU" ] && EXTRA+=(-G "$GEMINI_NIVEAU")
+[ -n "$CLAUDE_MODEL" ] && EXTRA+=(-c "$CLAUDE_MODEL")
+[ -n "$CLAUDE_NIVEAU" ] && EXTRA+=(-E "$CLAUDE_NIVEAU")
+[ "$MET_CLAUDE" = 1 ] && EXTRA+=(--met-claude)
 
 exec "$PY" "$OVERLEG" -C "$MAP" -o "$RAPPORT" -b "$DIEPTE" -g "$GEMINI" -T "$TIMEOUT" ${EXTRA[@]+"${EXTRA[@]}"}

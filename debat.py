@@ -165,6 +165,79 @@ def stop_proces(proc) -> None:
             proc.kill()
 
 
+import urllib.error
+import urllib.request
+
+ANTIGRAVITY_LOG = Path.home() / "Library" / "Logs" / "Antigravity" / "language_server.log"
+
+GEMINI_MODELLEN = {
+    ("gemini-4-argon", "high"): ("MODEL_PLACEHOLDER_M417", "Gemini 4 Argon (High)", "pro"),
+    ("gemini-4-argon", "medium"): ("MODEL_PLACEHOLDER_M418", "Gemini 4 Argon (Medium)", "pro"),
+    ("gemini-4-argon", "low"): ("MODEL_PLACEHOLDER_M419", "Gemini 4 Argon (Low)", "pro"),
+    ("gemini-3.8-flash", "high"): ("MODEL_PLACEHOLDER_M318", "Gemini 3.8 Flash (High)", "flash"),
+    ("gemini-3.8-flash", "medium"): ("MODEL_PLACEHOLDER_M319", "Gemini 3.8 Flash (Medium)", "flash"),
+    ("gemini-3.8-flash", "low"): ("MODEL_PLACEHOLDER_M320", "Gemini 3.8 Flash (Low)", "flash_lite"),
+}
+
+
+def gemini_model_info(model: str = "gemini-4-argon", niveau: str = "high") -> tuple:
+    """Vertaalt een Gemini-modelnaam en denkniveau naar:
+    (kanoniek_model, kanoniek_niveau, enum_code, leesbaar_label, agentapi_tier)."""
+    ruw_m = (model or "").strip().lower()
+    ruw_n = (niveau or "").strip().lower()
+
+    for achtervoegsel in ("-high", "-medium", "-low"):
+        if ruw_m.endswith(achtervoegsel):
+            if not ruw_n:
+                ruw_n = achtervoegsel[1:]
+            ruw_m = ruw_m[: -len(achtervoegsel)]
+            break
+
+    if ruw_m in ("", "pro", "argon", "gemini-4-argon", "gemini-pro"):
+        kanoniek_m = "gemini-4-argon"
+    elif ruw_m in ("flash_lite", "flash-lite", "gemini-3.8-flash-lite"):
+        kanoniek_m = "gemini-3.8-flash"
+        if not ruw_n:
+            ruw_n = "low"
+    elif ruw_m in ("flash", "gemini-3.8-flash", "gemini-flash"):
+        kanoniek_m = "gemini-3.8-flash"
+    else:
+        raise ValueError(
+            f"onbekend Gemini-model: {model!r} (kies uit: gemini-4-argon, gemini-3.8-flash, pro, flash, flash_lite)"
+        )
+
+    if ruw_n in ("", "high", "hoog", "max", "xhigh", "ultra"):
+        kanoniek_n = "high"
+    elif ruw_n in ("medium", "middel", "normaal"):
+        kanoniek_n = "medium"
+    elif ruw_n in ("low", "laag", "snel"):
+        kanoniek_n = "low"
+    else:
+        raise ValueError(f"onbekend Gemini-denkniveau: {niveau!r} (kies uit: high, medium, low)")
+
+    enum_code, label, tier = GEMINI_MODELLEN[(kanoniek_m, kanoniek_n)]
+    return kanoniek_m, kanoniek_n, enum_code, label, tier
+
+
+def _claude_standaard(ps_tekst: str = "") -> tuple:
+    """Leest het actieve Claude-model en denkniveau (geen sleutels of tokens) of valt terug op
+    (claude-opus-5-5, xhigh)."""
+    gevonden_model = os.environ.get("CLAUDE_MODEL", "").strip()
+    gevonden_niveau = os.environ.get("CLAUDE_EFFORT", "").strip()
+    for regel in ps_tekst.splitlines():
+        if "claude.app/Contents/MacOS/claude" not in regel and " --effort" not in regel:
+            continue
+        m_mod = re.search(r"--model[=\s]+([A-Za-z0-9._-]+)", regel)
+        m_eff = re.search(r"--effort[=\s]+([A-Za-z0-9._-]+)", regel)
+        if m_mod:
+            gevonden_model = m_mod.group(1)
+        if m_eff:
+            gevonden_niveau = m_eff.group(1)
+        if gevonden_model and gevonden_niveau:
+            break
+    return gevonden_model or "claude-opus-5-5", gevonden_niveau or "xhigh"
+
+
 def omgeving(cmd: list):
     """`claude -p` kiest een ANTHROPIC_API_KEY boven de abonnementslogin. Staat die
     variabele in je omgeving (bijvoorbeeld als Windows-gebruikersvariabele), dan draait de
@@ -173,6 +246,13 @@ def omgeving(cmd: list):
     if Path(cmd[0]).stem.lower() != "claude":
         return None
     return {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+
+
+def _antigravity_omgeving() -> tuple:
+    """Leest (adres, csrf_token) uitsluitend uit de door Antigravity gezette omgeving."""
+    adres = os.environ.get("ANTIGRAVITY_LS_ADDRESS", "").strip()
+    token = os.environ.get("ANTIGRAVITY_CSRF_TOKEN", "").strip()
+    return adres, token
 
 
 def _draai(cmd: list, invoer: str, timeout: int, registreer, werkmap=None) -> tuple:
@@ -197,15 +277,19 @@ def _draai(cmd: list, invoer: str, timeout: int, registreer, werkmap=None) -> tu
     return proc.returncode, uit, fout
 
 
-def roep_claude(systeem: str, prompt: str, model: str, timeout: int, registreer=None) -> str:
+def roep_claude(systeem: str, prompt: str, model: str, timeout: int, registreer=None,
+                niveau: str = "", werkmap=None) -> str:
     cmd = [vind(CLAUDE_CMD[0])] + CLAUDE_CMD[1:] + ["--system-prompt", systeem, "--model", model]
-    code, uit, fout = _draai(cmd, prompt, timeout, registreer)
+    if niveau:
+        cmd += ["--effort", niveau]
+    code, uit, fout = _draai(cmd, prompt, timeout, registreer, werkmap)
     if code != 0:
         raise RuntimeError(f"claude gaf exitcode {code}: {(fout.strip() or uit.strip())[:500]}")
     return uit.strip()
 
 
-def roep_codex(systeem: str, prompt: str, model: str, timeout: int, registreer=None) -> str:
+def roep_codex(systeem: str, prompt: str, model: str, timeout: int, registreer=None,
+               niveau: str = "") -> str:
     # Codex exec kent geen aparte systeemprompt, dus die zetten we bovenaan.
     volledig = f"{systeem}\n\n---\n\n{prompt}"
     with tempfile.TemporaryDirectory() as tmp:
@@ -213,6 +297,8 @@ def roep_codex(systeem: str, prompt: str, model: str, timeout: int, registreer=N
         cmd = [vind(CODEX_CMD[0])] + CODEX_CMD[1:] + ["-o", str(laatste)]
         if model:
             cmd += ["--model", model]
+        if niveau:
+            cmd += ["-c", f'model_reasoning_effort="{niveau}"']
         cmd += ["-"]  # prompt via stdin
         code, uit, fout = _draai(cmd, volledig, timeout, registreer)
         if code != 0:
@@ -229,29 +315,146 @@ AGENTAPI = Path.home() / ".gemini" / "antigravity" / "bin" / "agentapi"
 BRAIN_DIR = Path.home() / ".gemini" / "antigravity" / "brain"
 
 
-def roep_gemini(systeem: str, prompt: str, model: str, timeout: int, registreer=None, werkmap=None) -> str:
-    """Roept Gemini (Antigravity) aan via agentapi en leest het eindantwoord uit het transcript.
-    Standaard alleen lezen; de tijdelijke conversatiemap wordt na afloop opgeruimd."""
-    api = os.environ.get("GEMINI_AGENTAPI", "").strip()
-    bin_pad = Path(api) if api else (AGENTAPI if AGENTAPI.exists() else Path(shutil.which("agentapi") or ""))
-    if not bin_pad or not bin_pad.is_file():
-        raise RuntimeError("agentapi niet gevonden (~/.gemini/antigravity/bin/agentapi)")
-    tier = model if model in ("pro", "flash", "flash_lite") else "pro"
+def _antigravity_rpc(adres: str, token: str, methode: str, payload: dict, timeout: float = 15.0) -> dict:
+    url = f"http://{adres}/exa.language_server_pb.LanguageServerService/{methode}"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "x-codeium-csrf-token": token,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            inhoud = r.read().decode("utf-8", errors="replace").strip()
+            return json.loads(inhoud) if inhoud else {}
+    except urllib.error.HTTPError as e:
+        details = e.read().decode("utf-8", errors="replace")[:300]
+        raise RuntimeError(f"Antigravity {methode} HTTP {e.code}: {details}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Antigravity {methode} onbereikbaar op {adres}: {e}") from e
+
+
+def _ruim_gemini_sessie_op(brain: Path, cid: str, adres: str = "", token: str = "") -> None:
+    if os.environ.get("GEMINI_BEWAAR_SESSIE"):
+        return
+    if adres and token:
+        try:
+            _antigravity_rpc(adres, token, "DeleteCascadeTrajectory", {"cascadeId": cid}, timeout=5.0)
+        except Exception:
+            pass
+    shutil.rmtree(brain / cid, ignore_errors=True)
+    for extra in (brain.parent / "presence" / f"{cid}.lock",
+                  brain.parent / "conversations" / f"{cid}.pb"):
+        try:
+            extra.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def roep_gemini(systeem: str, prompt: str, model: str = "gemini-4-argon", timeout: int = 600,
+                registreer=None, werkmap=None, niveau: str = "high") -> str:
+    """Roept Gemini (Antigravity) aan met expliciete keuze voor model en denkniveau.
+    Gebruikt rechtstreeks de lokale LanguageServerService van Antigravity (werkt ook zonder
+    ANTIGRAVITY_LS_ADDRESS in de shell), of valt terug op GEMINI_AGENTAPI voor test-stubs."""
+    _, _, enum_code, _, tier = gemini_model_info(model, niveau)
     map_regel = f"\nJe werkmap om alleen-lezend in te kijken is: {werkmap}\n" if werkmap else ""
     volledig = (
         f"{systeem.strip()}{map_regel}\n"
         "BELANGRIJK: Alleen lezen. Wijzig geen bestanden, maak geen commits, start geen servers of achtergrondsessies.\n\n"
         f"---\n\n{prompt}"
     )
-    cmd = [str(bin_pad), "new-conversation", f"--model={tier}", "--title=AI-Overleg", volledig]
-    code, uit, fout = _draai(cmd, "", min(timeout, 30), registreer, werkmap)
+    brain = Path(os.environ.get("GEMINI_BRAIN_DIR", "").strip() or BRAIN_DIR)
+    eigen_api = os.environ.get("GEMINI_AGENTAPI", "").strip()
+    eigen_brain = os.environ.get("GEMINI_BRAIN_DIR", "").strip()
+
+    adres, token = _antigravity_omgeving()
+
+    if not eigen_api and not eigen_brain and adres and token:
+        start = _antigravity_rpc(
+            adres, token, "StartCascade",
+            {"source": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT"},
+            timeout=min(timeout, 15),
+        )
+        cid = start.get("cascadeId", "")
+        if not cid:
+            raise RuntimeError(f"kon geen cascadeId starten bij Antigravity: {start}")
+        try:
+            _antigravity_rpc(
+                adres, token, "SendUserCascadeMessage",
+                {
+                    "cascadeId": cid,
+                    "items": [{"text": volledig}],
+                    "cascadeConfig": {
+                        "plannerConfig": {
+                            "planModel": enum_code,
+                            "requestedModel": {"model": enum_code},
+                            "conversational": {
+                                "plannerMode": "CONVERSATIONAL_PLANNER_MODE_READ_ONLY",
+                                "agenticMode": True,
+                            },
+                        }
+                    },
+                },
+                timeout=min(timeout, 30),
+            )
+            einde = time.monotonic() + timeout
+            while time.monotonic() < einde:
+                tr = _antigravity_rpc(
+                    adres, token, "GetCascadeTrajectory",
+                    {"cascadeId": cid},
+                    timeout=min(timeout, 15),
+                )
+                stappen = tr.get("trajectory", {}).get("steps", [])
+                status = tr.get("status", "")
+                for s in reversed(stappen):
+                    if s.get("type") == "CORTEX_STEP_TYPE_PLANNER_RESPONSE":
+                        if s.get("status") == "CORTEX_STEP_STATUS_DONE":
+                            pr = s.get("plannerResponse", {})
+                            if not pr.get("toolCalls") and (pr.get("response") or "").strip():
+                                return pr["response"].strip()
+                        elif s.get("status") == "CORTEX_STEP_STATUS_ERROR":
+                            fout_info = s.get("error", {}) or s
+                            raise RuntimeError(f"gemini fout in sessie {cid}: {str(fout_info)[:400]}")
+                        break
+                if status and "RUNNING" not in status and stappen:
+                    laatste = stappen[-1]
+                    if laatste.get("status") == "CORTEX_STEP_STATUS_ERROR":
+                        fout_info = laatste.get("error", {}) or laatste
+                        raise RuntimeError(f"gemini fout in sessie {cid}: {str(fout_info)[:400]}")
+                time.sleep(0.5)
+            raise subprocess.TimeoutExpired(["Antigravity", enum_code], timeout)
+        finally:
+            _ruim_gemini_sessie_op(brain, cid, adres, token)
+
+    bin_pad = Path(eigen_api) if eigen_api else (AGENTAPI if AGENTAPI.exists() else Path(shutil.which("agentapi") or ""))
+    if not bin_pad or not bin_pad.is_file():
+        raise RuntimeError(
+            "Antigravity language_server draait niet (open de Antigravity-app) en agentapi is niet gevonden."
+        )
+    oud_adres = os.environ.get("ANTIGRAVITY_LS_ADDRESS")
+    oud_token = os.environ.get("ANTIGRAVITY_CSRF_TOKEN")
+    if adres and not oud_adres:
+        os.environ["ANTIGRAVITY_LS_ADDRESS"] = adres
+    if token and not oud_token:
+        os.environ["ANTIGRAVITY_CSRF_TOKEN"] = token
+    try:
+        cmd = [str(bin_pad), "new-conversation", f"--model={tier}", "--title=AI-Overleg", volledig]
+        code, uit, fout = _draai(cmd, "", min(timeout, 30), registreer, werkmap)
+    finally:
+        if adres and oud_adres is None:
+            os.environ.pop("ANTIGRAVITY_LS_ADDRESS", None)
+        if token and oud_token is None:
+            os.environ.pop("ANTIGRAVITY_CSRF_TOKEN", None)
     if code != 0:
         raise RuntimeError(f"gemini agentapi gaf exitcode {code}: {(fout.strip() or uit.strip())[:500]}")
     try:
         cid = json.loads(uit)["response"]["newConversation"]["conversationId"]
     except (ValueError, KeyError, TypeError) as e:
         raise RuntimeError(f"kon conversationId niet lezen uit agentapi: {uit[:300]}") from e
-    brain = Path(os.environ.get("GEMINI_BRAIN_DIR", "").strip() or BRAIN_DIR)
     pad = brain / cid / ".system_generated" / "logs" / "transcript.jsonl"
     pad_vol = brain / cid / ".system_generated" / "logs" / "transcript_full.jsonl"
     einde = time.monotonic() + timeout
@@ -264,22 +467,16 @@ def roep_gemini(systeem: str, prompt: str, model: str, timeout: int, registreer=
                 except (OSError, ValueError):
                     regels = []
                 for r in reversed(regels):
-                    if (r.get("type") == "PLANNER_RESPONSE" and r.get("status") == "DONE"
-                            and not r.get("tool_calls") and (r.get("content") or "").strip()):
-                        return r["content"].strip()
-                    if r.get("status") == "ERROR":
-                        raise RuntimeError(f"gemini fout in sessie {cid}: {r.get('content', 'onbekend')[:400]}")
+                    if r.get("type") == "PLANNER_RESPONSE":
+                        if r.get("status") == "DONE" and not r.get("tool_calls") and (r.get("content") or "").strip():
+                            return r["content"].strip()
+                        if r.get("status") == "ERROR":
+                            raise RuntimeError(f"gemini fout in sessie {cid}: {r.get('content', 'onbekend')[:400]}")
+                        break
             time.sleep(0.5)
         raise subprocess.TimeoutExpired(cmd, timeout)
     finally:
-        if not os.environ.get("GEMINI_BEWAAR_SESSIE"):
-            shutil.rmtree(brain / cid, ignore_errors=True)
-            for extra in (brain.parent / "presence" / f"{cid}.lock",
-                          brain.parent / "conversations" / f"{cid}.pb"):
-                try:
-                    extra.unlink(missing_ok=True)
-                except OSError:
-                    pass
+        _ruim_gemini_sessie_op(brain, cid, adres, token)
 
 
 def schoon_codex(ruw: str) -> str:

@@ -118,14 +118,27 @@ def bouw_overleg_prompt(opdracht_tekst: str, geschiedenis: list, spreker: str, i
 
 def draai_overleg(werkmap: Path, rapport: Path, titel: str, opdracht_tekst: str,
                   rondes: int = 2, codex_model: str = "", codex_niveau: str = "",
-                  gemini_model: str = "pro", timeout: int = 1200) -> int:
-    if not (os.environ.get("ANTIGRAVITY_LS_ADDRESS", "").strip()
+                  gemini_model: str = "gemini-4-argon", gemini_niveau: str = "high",
+                  claude_model: str = "", claude_niveau: str = "",
+                  met_claude: bool = False, timeout: int = 1200) -> int:
+    adres, token = debat._antigravity_omgeving()
+    if not ((adres and token) or os.environ.get("ANTIGRAVITY_LS_ADDRESS", "").strip()
             or os.environ.get("GEMINI_AGENTAPI", "").strip()):
         print("overleg.py: Gemini-toegang ontbreekt; start dit in de Terminal van Antigravity: "
               "Terminal > New Terminal", file=sys.stderr)
         return 2
-    codex_model = codex_model or _codex_config("model")
-    codex_niveau = codex_niveau or _codex_config("model_reasoning_effort")
+
+    codex_model = codex_model or _codex_config("model") or "gpt-6-sol"
+    codex_niveau = codex_niveau or _codex_config("model_reasoning_effort") or "high"
+    codex_label = f"{codex_model} · {codex_niveau}" if codex_niveau else codex_model
+
+    gem_m, gem_n, gem_enum, gemini_label, _ = debat.gemini_model_info(gemini_model, gemini_niveau)
+
+    std_claude_m, std_claude_n = debat._claude_standaard()
+    claude_model = claude_model or std_claude_m
+    claude_niveau = claude_niveau or std_claude_n
+    claude_label = f"{claude_model} · {claude_niveau}" if claude_niveau else claude_model
+
     rapport.parent.mkdir(parents=True, exist_ok=True)
     ronde_bestand = rapport.parent / (rapport.name + ".ronde")
     for p in (rapport, ronde_bestand):
@@ -140,8 +153,13 @@ def draai_overleg(werkmap: Path, rapport: Path, titel: str, opdracht_tekst: str,
         naambestand=str(ronde_bestand),
         project=str(werkmap),
         rapport=str(rapport),
-        codex_model=codex_model or "standaard",
-        gemini_model=f"gemini-{gemini_model}",
+        codex_model=codex_model,
+        codex_niveau=codex_niveau,
+        gemini_model=gem_m,
+        gemini_niveau=gem_n,
+        gemini_model_enum=gem_enum,
+        claude_model=claude_label,
+        claude_niveau=claude_niveau,
         niveau=codex_niveau,
         sandbox="read-only",
     )
@@ -149,31 +167,43 @@ def draai_overleg(werkmap: Path, rapport: Path, titel: str, opdracht_tekst: str,
     geschiedenis = []
 
     # Standaard volgorde voor diepgaand overleg:
-    # Ronde 1: Codex analyseert -> Gemini analyseert + reageert op Codex
-    # Ronde 2 (indien rondes >= 2): Codex reageert op Gemini en trekt de gezamenlijke eindconclusie
-    # (Bij meer rondes wisselen ze verder af en sluit de laatste af met de gezamenlijke eindconclusie)
-    beurten_plan = ["codex", "gemini"]
-    if rondes >= 2:
-        for r in range(2, rondes + 1):
-            beurten_plan.append("codex" if len(beurten_plan) % 2 == 0 else "gemini")
+    # Ronde 1: Codex analyseert -> Gemini analyseert + reageert op Codex (en optioneel Claude bij --met-claude)
+    # Ronde 2 (indien rondes >= 2): kruisreactie en gezamenlijke eindconclusie
+    if met_claude:
+        beurten_plan = ["codex", "gemini", "claude"]
+        if rondes >= 2:
+            for r in range(2, rondes + 1):
+                beurten_plan.append("codex" if r % 2 == 0 else "gemini")
+    else:
+        beurten_plan = ["codex", "gemini"]
+        if rondes >= 2:
+            for r in range(2, rondes + 1):
+                beurten_plan.append("codex" if len(beurten_plan) % 2 == 0 else "gemini")
 
-    laatste_tekst = ""
+    naam_kaart = {"codex": "Codex", "gemini": "Gemini", "claude": "Claude"}
     for idx, kant in enumerate(beurten_plan):
         is_slot = (idx == len(beurten_plan) - 1)
         prompt = bouw_overleg_prompt(
             opdracht_tekst, geschiedenis,
-            "Codex" if kant == "codex" else "Gemini",
+            naam_kaart[kant],
             is_slot=is_slot,
         )
         begin = time.monotonic()
+        model_label = codex_label if kant == "codex" else (gemini_label if kant == "gemini" else claude_label)
         try:
             if kant == "codex":
                 volledig = f"{SYSTEEM_OVERLEG}\n\n---\n\n{prompt}"
                 tekst = roep_codex_in_map(werkmap, volledig, codex_model, codex_niveau, timeout)
-                model_label = codex_model or "codex"
+            elif kant == "gemini":
+                tekst = debat.roep_gemini(
+                    SYSTEEM_OVERLEG, prompt, gemini_model, timeout,
+                    werkmap=werkmap, niveau=gemini_niveau,
+                )
             else:
-                tekst = debat.roep_gemini(SYSTEEM_OVERLEG, prompt, gemini_model, timeout, werkmap=werkmap)
-                model_label = f"gemini-{gemini_model}"
+                tekst = debat.roep_claude(
+                    SYSTEEM_OVERLEG, prompt, claude_model, timeout,
+                    niveau=claude_niveau, werkmap=werkmap,
+                )
         except Exception as e:
             duur = round(time.monotonic() - begin, 1)
             ronde.voeg_toe(run_dir, kant, "fout", f"{kant} stopte met een fout: {e}", model=model_label, duur=duur)
@@ -181,15 +211,24 @@ def draai_overleg(werkmap: Path, rapport: Path, titel: str, opdracht_tekst: str,
             return 1
 
         duur = round(time.monotonic() - begin, 1)
-        soort = "controle" if (is_slot and kant == "codex") else ("advies" if (is_slot and kant == "gemini") else "overleg")
+        if is_slot and kant == "codex":
+            soort = "controle"
+        elif is_slot and kant == "gemini":
+            soort = "advies"
+        else:
+            soort = "overleg"
         beurt = ronde.voeg_toe(run_dir, kant, soort, tekst, model=model_label, duur=duur)
         geschiedenis.append(beurt)
-        laatste_tekst = tekst
 
-    # Schrijf een compleet verslag naar rapport zodat Claude zowel de dialoog als de eindconclusie ziet.
+    # Schrijf een compleet verslag naar rapport zodat Claude en Mehdi zowel de modellen/denkstanden,
+    # de dialoog als de gezamenlijke eindconclusie zien.
     verslag_delen = [
-        f"# Driehoeksoverleg (Codex & Gemini): {titel}",
+        f"# Driehoeksoverleg (Codex, Gemini & Claude): {titel}",
         f"Ronde in dashboard: `{run_naam}` (http://127.0.0.1:8099)",
+        "Modellen en denkstand:",
+        f"- Claude: `{claude_model}` (denkstand: `{claude_niveau}`)",
+        f"- Codex: `{codex_model}` (denkstand: `{codex_niveau}`)",
+        f"- Gemini (Antigravity): `{gemini_label}` (`{gem_m}`, denkstand: `{gem_n}`)",
         "",
     ]
     for b in geschiedenis[:-1]:
@@ -224,17 +263,42 @@ def positieve_seconden(waarde: str) -> int:
     return seconden
 
 
+def geldige_gemini_model(waarde: str) -> str:
+    try:
+        debat.gemini_model_info(waarde, "high")
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+    return waarde
+
+
+def geldige_gemini_niveau(waarde: str) -> str:
+    try:
+        debat.gemini_model_info("gemini-4-argon", waarde)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+    return waarde
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Driehoeksoverleg tussen Claude, Codex en Gemini")
     p.add_argument("-C", dest="map", required=True, help="Werkmap om te onderzoeken (alleen lezen)")
     p.add_argument("-o", dest="rapport", required=True, help="Uitvoerbestand voor het gezamenlijke rapport")
     p.add_argument("-t", dest="titel", default="", help="Titel in het dashboard")
     p.add_argument("-b", dest="beurten", type=int, default=2, help="Diepte van het overleg (1 = Codex+Gemini, 2 = + kruisreactie/synthese)")
-    p.add_argument("-m", dest="codex_model", default="", help="Codex-model")
-    p.add_argument("-e", dest="codex_niveau", default="", help="Codex redeneerniveau")
-    p.add_argument("-g", dest="gemini_model", default="pro", choices=["pro", "flash", "flash_lite"], help="Gemini-model")
+    p.add_argument("-m", dest="codex_model", default="", help="Codex-model (bijv. gpt-6-sol, gpt-6-astra)")
+    p.add_argument("-e", dest="codex_niveau", default="", help="Codex redeneerniveau (low, medium, high, xhigh, ultra)")
+    p.add_argument("-g", dest="gemini_model", default="gemini-4-argon", type=geldige_gemini_model,
+                   help="Gemini-model (gemini-4-argon, gemini-3.8-flash, pro, flash, flash_lite)")
+    p.add_argument("-G", "--gemini-niveau", dest="gemini_niveau", default="high", type=geldige_gemini_niveau,
+                   help="Gemini denkniveau (high, medium, low)")
+    p.add_argument("-c", "--claude-model", dest="claude_model", default="",
+                   help="Claude-model (bijv. claude-opus-5-5, opus, sonnet)")
+    p.add_argument("-E", "--claude-niveau", dest="claude_niveau", default="",
+                   help="Claude denkniveau (max, xhigh, high, medium, low)")
+    p.add_argument("--met-claude", action="store_true",
+                   help="Laat Claude ook zelfstandig een overlegbeurt draaien via de CLI")
     p.add_argument("-T", "--timeout", type=positieve_seconden, default=1200,
-                   metavar="SECONDEN", help="Timeout per Codex- en Gemini-beurt (standaard 1200 seconden)")
+                   metavar="SECONDEN", help="Timeout per beurt (standaard 1200 seconden)")
     p.add_argument("--runs", default="", help="Andere runs-map (voor zelftest/tests)")
     args = p.parse_args(argv)
 
@@ -259,6 +323,10 @@ def main(argv=None) -> int:
         codex_model=args.codex_model,
         codex_niveau=args.codex_niveau,
         gemini_model=args.gemini_model,
+        gemini_niveau=args.gemini_niveau,
+        claude_model=args.claude_model,
+        claude_niveau=args.claude_niveau,
+        met_claude=args.met_claude,
         timeout=args.timeout,
     )
 

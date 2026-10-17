@@ -176,6 +176,63 @@ class Overleg(unittest.TestCase):
         self.assertIn("Gemini vult aan", board[2]["tekst"])
         self.assertFalse((self.brain / "stub-gesprek").exists())
 
+    def test_modellen_en_denkstand_worden_vastgelegd(self):
+        with mock.patch.dict(os.environ, {"GEMINI_AGENTAPI": str(self.gemini),
+                                          "CODEX_HOME": str(self.map)}):
+            with mock.patch.object(overleg, "roep_codex_in_map", return_value="Codex antwoord") as codex:
+                with mock.patch.object(debat, "roep_gemini", return_value="Gemini antwoord") as gemini:
+                    with mock.patch.object(debat, "roep_claude", return_value="Claude slot") as claude:
+                        with mock.patch("sys.stdin", io.StringIO("Onderzoek de afspraak.")):
+                            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                                code = overleg.main([
+                                    "-C", str(self.werkmap), "-o", str(self.rapport),
+                                    "--runs", str(self.runs), "-b", "3",
+                                    "-m", "gpt-5.4", "-e", "xhigh",
+                                    "-g", "gemini-4-argon", "-G", "high",
+                                    "-c", "claude-opus-4-7", "-E", "max",
+                                    "--met-claude",
+                                ])
+        self.assertEqual(code, 0)
+        self.assertEqual(codex.call_args.args[2:5], ("gpt-5.4", "xhigh", 1200))
+        self.assertEqual(gemini.call_args.args[2], "gemini-4-argon")
+        self.assertEqual(gemini.call_args.kwargs.get("niveau"), "high")
+        self.assertEqual(claude.call_args.args[2], "claude-opus-4-7")
+        self.assertEqual(claude.call_args.kwargs.get("niveau"), "max")
+        rapport = self.rapport.read_text(encoding="utf-8")
+        self.assertIn("- Claude: `claude-opus-4-7` (denkstand: `max`)", rapport)
+        self.assertIn("- Codex: `gpt-5.4` (denkstand: `xhigh`)", rapport)
+        self.assertIn("- Gemini (Antigravity): `Gemini 4 Argon (High)` (`gemini-4-argon`, denkstand: `high`)", rapport)
+        naam = Path(str(self.rapport) + ".ronde").read_text(encoding="utf-8").strip()
+        onderwerp = json.loads((self.runs / naam / "onderwerp.json").read_text(encoding="utf-8"))
+        self.assertEqual(onderwerp["codex_model"], "gpt-5.4")
+        self.assertEqual(onderwerp["codex_niveau"], "xhigh")
+        self.assertEqual(onderwerp["gemini_model"], "gemini-4-argon")
+        self.assertEqual(onderwerp["gemini_niveau"], "high")
+        self.assertEqual(onderwerp["gemini_model_enum"], "MODEL_PLACEHOLDER_M417")
+        self.assertEqual(onderwerp["claude_model"], "claude-opus-4-7 · max")
+        self.assertEqual(onderwerp["claude_niveau"], "max")
+
+    def test_auto_detectie_antigravity_en_gemini_model_mapping(self):
+        self.assertEqual(
+            debat.gemini_model_info("gemini-4-argon", "high"),
+            ("gemini-4-argon", "high", "MODEL_PLACEHOLDER_M417", "Gemini 4 Argon (High)", "pro"),
+        )
+        self.assertEqual(
+            debat.gemini_model_info("flash", "medium"),
+            ("gemini-3.8-flash", "medium", "MODEL_PLACEHOLDER_M319", "Gemini 3.8 Flash (Medium)", "flash"),
+        )
+        ps_tekst = (
+            "41164 /Users/test/.local/bin/claude --output-format stream-json --model claude-opus-4-7 --effort max\n"
+        )
+        with mock.patch.dict(os.environ, {
+            "ANTIGRAVITY_LS_ADDRESS": "localhost:53510",
+            "ANTIGRAVITY_CSRF_TOKEN": "nep-test-token-123",
+        }, clear=True):
+            gevonden = debat._antigravity_omgeving()
+            self.assertEqual(gevonden, ("localhost:53510", "nep-test-token-123"))
+            c_model, c_niveau = debat._claude_standaard(ps_tekst=ps_tekst)
+            self.assertEqual((c_model, c_niveau), ("claude-opus-4-7", "max"))
+
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "overleg.sh vereist bash")
 class OverlegSh(unittest.TestCase):
@@ -223,3 +280,4 @@ class OverlegSh(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

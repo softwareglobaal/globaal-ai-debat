@@ -20,7 +20,7 @@ from datetime import datetime
 
 import debat
 
-CLAUDE_KANDIDATEN = ["sonnet", "opus", "haiku", "fable"]
+CLAUDE_KANDIDATEN = ["claude-opus-5-5", "opus", "sonnet", "haiku", "fable"]
 CODEX_KANDIDATEN = ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
 VRAAG = "Antwoord met alleen het woord: ok"
 
@@ -62,12 +62,19 @@ def main() -> int:
     p.add_argument("--codex", nargs="*", default=[], help="extra Codex-modellen om te proberen")
     args = p.parse_args()
 
-    resultaat = {"gecontroleerd_op": datetime.now().isoformat(timespec="seconds"),
-                 "claude": [], "codex": [], "geweigerd": {"claude": [], "codex": []}}
+    standaard_bron = json.loads((debat.BASIS / "modellen.standaard.json").read_text(encoding="utf-8"))
+    resultaat = {
+        "gecontroleerd_op": datetime.now().isoformat(timespec="seconds"),
+        "claude": [],
+        "codex": [],
+        "gemini": standaard_bron.get("gemini", []),
+        "niveaus": standaard_bron.get("niveaus", {}),
+        "geweigerd": {"claude": [], "codex": []},
+    }
 
     for model in dict.fromkeys(CLAUDE_KANDIDATEN + args.claude):
         ok, info = probeer_claude(model)
-        print(f"claude {model:<14} {'werkt' if ok else 'GEWEIGERD'}  {'' if ok else info}")
+        print(f"claude {model:<16} {'werkt' if ok else 'GEWEIGERD'}  {'' if ok else info}")
         if ok:
             resultaat["claude"].append({"waarde": model, "label": model})
         else:
@@ -75,7 +82,7 @@ def main() -> int:
 
     # Eerst het standaardmodel, zodat we weten hoe het echt heet.
     ok, naam = probeer_codex("")
-    print(f"codex  {'(standaard)':<14} {'werkt, heet ' + naam if ok else 'GEWEIGERD  ' + naam}")
+    print(f"codex  {'(standaard)':<16} {'werkt, heet ' + naam if ok else 'GEWEIGERD  ' + naam}")
     if ok:
         resultaat["codex"].append({"waarde": "", "label": f"{naam} (standaard)"})
     else:
@@ -86,7 +93,7 @@ def main() -> int:
         if model == standaard:
             continue
         ok, info = probeer_codex(model)
-        print(f"codex  {model:<14} {'werkt' if ok else 'GEWEIGERD'}  {'' if ok else info}")
+        print(f"codex  {model:<16} {'werkt' if ok else 'GEWEIGERD'}  {'' if ok else info}")
         if ok:
             resultaat["codex"].append({"waarde": model, "label": model})
         else:

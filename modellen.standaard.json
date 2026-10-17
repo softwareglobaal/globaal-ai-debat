@@ -1,12 +1,39 @@
 {
   "gecontroleerd_op": null,
   "claude": [
-    {"waarde": "sonnet", "label": "sonnet"},
+    {"waarde": "claude-opus-5-5", "label": "claude-opus-5-5"},
     {"waarde": "opus", "label": "opus"},
+    {"waarde": "sonnet", "label": "sonnet"},
     {"waarde": "haiku", "label": "haiku"}
   ],
   "codex": [
-    {"waarde": "", "label": "standaardmodel van codex"}
+    {"waarde": "", "label": "standaardmodel van codex"},
+    {"waarde": "gpt-6-astra", "label": "gpt-6-astra"}
   ],
+  "gemini": [
+    {"waarde": "gemini-4-argon", "label": "Gemini 4 Argon (Pro)"},
+    {"waarde": "gemini-3.8-flash", "label": "Gemini 3.8 Flash"}
+  ],
+  "niveaus": {
+    "claude": [
+      {"waarde": "xhigh", "label": "xhigh (standaard)"},
+      {"waarde": "max", "label": "max"},
+      {"waarde": "high", "label": "high"},
+      {"waarde": "medium", "label": "medium"},
+      {"waarde": "low", "label": "low"}
+    ],
+    "codex": [
+      {"waarde": "ultra", "label": "ultra (standaard)"},
+      {"waarde": "xhigh", "label": "xhigh"},
+      {"waarde": "high", "label": "high"},
+      {"waarde": "medium", "label": "medium"},
+      {"waarde": "low", "label": "low"}
+    ],
+    "gemini": [
+      {"waarde": "high", "label": "high (standaard)"},
+      {"waarde": "medium", "label": "medium"},
+      {"waarde": "low", "label": "low"}
+    ]
+  },
   "geweigerd": {"claude": [], "codex": []}
 }

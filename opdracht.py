@@ -263,7 +263,7 @@ def testuitslag(test: dict) -> str:
     return f"{'GESLAAGD' if test['groen'] else 'GEFAALD'} (exitcode {test['exitcode']})"
 
 
-def roep_uitvoerder(systeem, prompt, model, timeout, werkmap, bash, registreer=None):
+def roep_uitvoerder(systeem, prompt, model, timeout, werkmap, bash, registreer=None, niveau=""):
     # acceptEdits keurt schrijven alleen binnen de werkmap (de worktree) goed; buiten die
     # map zou er om toestemming gevraagd worden, en in -p betekent dat geweigerd. Zo is
     # "werk alleen in deze map" een grendel en niet alleen een zin in de prompt.
@@ -273,6 +273,8 @@ def roep_uitvoerder(systeem, prompt, model, timeout, werkmap, bash, registreer=N
            "--permission-mode", "acceptEdits",
            "--no-session-persistence", "--output-format", "text",
            "--system-prompt", systeem, "--model", model]
+    if niveau:
+        cmd += ["--effort", niveau]
     if bash:
         cmd += ["--allowedTools", "Bash"]
     code, uit, fout = debat._draai(cmd, prompt, timeout, registreer, werkmap)

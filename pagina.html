@@ -263,12 +263,22 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
         <input type="checkbox" id="bash" style="width:auto;margin-top:4px">
         <span>De uitvoerder mag commando's draaien. Niet nodig voor tests, die draait de app zelf. Met dit aan kan er een commando lopen dat uit de testuitvoer komt.</span>
       </label>
-      <label class="veld">Claude-model
-        <select id="claude-model"></select>
-      </label>
-      <label class="veld" id="label-codex-model">ChatGPT-model
-        <select id="codex-model"></select>
-      </label>
+      <div class="rij">
+        <label class="veld">Claude-model
+          <select id="claude-model"></select>
+        </label>
+        <label class="veld">Denkniveau
+          <select id="claude-niveau"></select>
+        </label>
+      </div>
+      <div class="rij" id="label-codex-model">
+        <label class="veld">ChatGPT-model
+          <select id="codex-model"></select>
+        </label>
+        <label class="veld">Denkniveau
+          <select id="codex-niveau"></select>
+        </label>
+      </div>
       <div id="modellen-info" style="font-size:12px;color:var(--zacht)"></div>
       <label class="veld" id="label-start">Wie opent
         <select id="start">
@@ -875,6 +885,7 @@ async function startOpdracht() {
         rondes: +$("rondes").value,
         max_woorden: +$("woorden").value,
         claude_model: $("claude-model").value,
+        claude_niveau: $("claude-niveau").value,
         bash: $("bash").checked,
         testcommando: $("testcommando").value.trim(),
         label: $("opdracht-label").value.trim(),
@@ -901,7 +912,9 @@ $("knop-start").onclick = async () => {
         beurten: +$("beurten").value,
         max_woorden: +$("woorden").value,
         claude_model: $("claude-model").value,
+        claude_niveau: $("claude-niveau").value,
         codex_model: $("codex-model").value.trim(),
+        codex_niveau: $("codex-niveau").value,
         start: $("start").value,
       }),
     });
@@ -1168,6 +1181,9 @@ async function laadModellen() {
   };
   vul("claude-model", m.claude);
   vul("codex-model", m.codex);
+  const niv = m.niveaus || {};
+  vul("claude-niveau", niv.claude || [{ waarde: "xhigh", label: "xhigh (standaard)" }, { waarde: "max", label: "max" }, { waarde: "high", label: "high" }, { waarde: "medium", label: "medium" }, { waarde: "low", label: "low" }]);
+  vul("codex-niveau", niv.codex || [{ waarde: "ultra", label: "ultra (standaard)" }, { waarde: "xhigh", label: "xhigh" }, { waarde: "high", label: "high" }, { waarde: "medium", label: "medium" }, { waarde: "low", label: "low" }]);
   $("modellen-info").textContent = m.gecontroleerd_op
     ? `Modellen gecontroleerd op ${m.gecontroleerd_op.slice(0, 10)}`
     : "Modellen nog niet gecontroleerd op deze machine: draai controleer_modellen.py";

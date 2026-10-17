@@ -42,6 +42,7 @@ SPREKERS = {
     ("codex", "controle"): "CONTROLE (Codex)",
     ("codex", "fout"): "FOUT (Codex stopte)",
     ("claude", "verwerking"): "VERWERKING (Claude)",
+    ("claude", "fout"): "FOUT (Claude stopte)",
     ("gemini", "advies"): "ADVIES (Gemini)",
     ("gemini", "fout"): "FOUT (Gemini stopte)",
     ("codex", "overleg"): "OVERLEG (Codex)",
@@ -234,7 +235,8 @@ def nieuw(titel: str, opdracht: str, tijd=None, naambestand=None, **gegevens) ->
     if not (opdracht or "").strip():
         raise ValueError("opdracht is leeg")
     moment = datetime.fromisoformat(tijd) if tijd else datetime.now()
-    eerste = _maak_beurt(1, "claude", "opdracht", opdracht, model="Claude Code", tijd=moment.isoformat())
+    claude_label = gegevens.get("claude_model") or "Claude Code"
+    eerste = _maak_beurt(1, "claude", "opdracht", opdracht, model=claude_label, tijd=moment.isoformat())
     onderwerp = {"vraag": titel, "modus": "ronde", **{k: v for k, v in gegevens.items() if v}}
     runs = _runs()
     runs.mkdir(parents=True, exist_ok=True)

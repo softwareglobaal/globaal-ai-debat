@@ -124,8 +124,14 @@ def draai(onderwerp, config):
 
     systeem = debat.HUISREGELS.format(max_woorden=config["max_woorden"])
     kanten = {
-        "claude": {"rol": onderwerp["claude"], "roep": debat.roep_claude, "model": config["claude_model"]},
-        "codex": {"rol": onderwerp["codex"], "roep": debat.roep_codex, "model": config["codex_model"]},
+        "claude": {
+            "rol": onderwerp["claude"], "roep": debat.roep_claude,
+            "model": config["claude_model"], "niveau": config.get("claude_niveau", ""),
+        },
+        "codex": {
+            "rol": onderwerp["codex"], "roep": debat.roep_codex,
+            "model": config["codex_model"], "niveau": config.get("codex_niveau", ""),
+        },
     }
     beurt_aan = config["start"]
 
@@ -161,8 +167,9 @@ def draai(onderwerp, config):
             begin = time.time()
             # Een fout halverwege beeindigt het debat, maar niet zonder vonnis over wat er al ligt.
             try:
+                extra = {"niveau": kant["niveau"]} if kant.get("niveau") else {}
                 tekst = kant["roep"](systeem, prompt, kant["model"], config["timeout"],
-                                     registreer_proces)
+                                     registreer_proces, **extra)
             except Exception as e:
                 if not gestopt():
                     zet(fout=str(e)[:800])
@@ -175,11 +182,14 @@ def draai(onderwerp, config):
                 break
             tekst = tekst or debat.ALLEEN_STANDPUNT.format(standpunt)
 
+            model_label = kant["model"] or "standaard"
+            if kant.get("niveau"):
+                model_label = f"{model_label} · {kant['niveau']}"
             voeg_beurt_toe({
                 "nr": nr,
                 "spreker": label,
                 "kant": beurt_aan,
-                "model": kant["model"] or "standaard",
+                "model": model_label,
                 "tijd": datetime.now().isoformat(timespec="seconds"),
                 "duur_s": round(time.time() - begin, 1),
                 "tekst": tekst,
@@ -257,12 +267,15 @@ def draai_opdracht(onderwerp, config):
         totaal=stappen, fout=None, stop_gevraagd=False, bezig_met=None,
         modus="opdracht", werkmap=None, tak=None, vonnis=None, stop_reden=None)
 
+    claude_niveau = config.get("claude_niveau", "")
+    uitvoerder_label = f"{config['claude_model']} · {claude_niveau}" if claude_niveau else config["claude_model"]
+
     # De feiten van deze run als velden; het oordeel vul jij later in de tabel in. Variant
     # blijft 'solo', zodat oude duo-runs in de tabel ernaast te vergelijken blijven.
     resultaat = {
         "label": config["label"], "variant": "solo",
         "repo": Path(onderwerp["repo"]).name, "opdracht": onderwerp["vraag"],
-        "uitvoerder": config["claude_model"], "reviewer": None,
+        "uitvoerder": uitvoerder_label, "reviewer": None,
         "testcommando": commando or None, "tak": None,
         "rondes_gepland": rondes, "rondes_gedraaid": 0,
         "tests_start": None, "tests_per_ronde": [], "tests_eind": None,
@@ -313,11 +326,12 @@ def draai_opdracht(onderwerp, config):
             # De uitvoerder schrijft of herstelt.
             zet(bezig_met=f"UITVOERDER (ronde {ronde})")
             begin = time.time()
+            extra = {"niveau": claude_niveau} if claude_niveau else {}
             verslag = opdracht.roep_uitvoerder(
                 opdracht.UITVOERDER.format(woorden=config["max_woorden"]),
                 opdracht.uitvoer_prompt(onderwerp["opdracht"], ronde, test, commando),
                 config["claude_model"], config["timeout"], werkmap,
-                config["bash"], registreer_proces)
+                config["bash"], registreer_proces, **extra)
             if gestopt():
                 break
             verschil = opdracht.diff_van(werkmap)
@@ -325,7 +339,7 @@ def draai_opdracht(onderwerp, config):
             voeg_beurt_toe({
                 "nr": nr, "spreker": f"UITVOERDER (Claude, ronde {ronde})",
                 "kant": "claude", "soort": "uitvoering",
-                "model": config["claude_model"],
+                "model": uitvoerder_label,
                 "tijd": datetime.now().isoformat(timespec="seconds"),
                 "duur_s": round(time.time() - begin, 1),
                 "tekst": verslag,
@@ -388,6 +402,7 @@ def api_opdracht():
         "rondes": max(1, min(6, int(gegevens.get("rondes", 2)))),
         "max_woorden": max(50, min(800, int(gegevens.get("max_woorden", 300)))),
         "claude_model": gegevens.get("claude_model", "sonnet"),
+        "claude_niveau": str(gegevens.get("claude_niveau") or "").strip(),
         "bash": bool(gegevens.get("bash", False)),
         "testcommando": str(gegevens.get("testcommando") or "").strip()[:500],
         "label": "".join(t for t in str(gegevens.get("label") or "") if t.isalnum() or t in "-_ ")[:40].strip(),
@@ -409,7 +424,9 @@ def api_start():
         "beurten": max(1, min(60, int(gegevens.get("beurten", 10)))),
         "max_woorden": max(50, min(800, int(gegevens.get("max_woorden", 250)))),
         "claude_model": gegevens.get("claude_model", "sonnet"),
+        "claude_niveau": str(gegevens.get("claude_niveau") or "").strip(),
         "codex_model": gegevens.get("codex_model", ""),
+        "codex_niveau": str(gegevens.get("codex_niveau") or "").strip(),
         "start": gegevens.get("start", "claude"),
         "timeout": 300,
     }
@@ -503,8 +520,14 @@ def api_modellen():
     in modellen.json en wordt bijgewerkt door controleer_modellen.py.
     """
     # modellen.json is per machine (niet in git); tot die er is geldt de veilige standaard.
-    bron = MODELLEN if MODELLEN.exists() else BASIS / "modellen.standaard.json"
-    return jsonify(json.loads(bron.read_text(encoding="utf-8")))
+    standaard = json.loads((BASIS / "modellen.standaard.json").read_text(encoding="utf-8"))
+    if MODELLEN.exists():
+        data = json.loads(MODELLEN.read_text(encoding="utf-8"))
+        for sleutel in ("gemini", "niveaus"):
+            if sleutel not in data:
+                data[sleutel] = standaard.get(sleutel, [] if sleutel == "gemini" else {})
+        return jsonify(data)
+    return jsonify(standaard)
 
 
 @app.get("/api/mappen")
