@@ -225,6 +225,63 @@ def roep_codex(systeem: str, prompt: str, model: str, timeout: int, registreer=N
     return schoon_codex(uit)
 
 
+AGENTAPI = Path.home() / ".gemini" / "antigravity" / "bin" / "agentapi"
+BRAIN_DIR = Path.home() / ".gemini" / "antigravity" / "brain"
+
+
+def roep_gemini(systeem: str, prompt: str, model: str, timeout: int, registreer=None, werkmap=None) -> str:
+    """Roept Gemini (Antigravity) aan via agentapi en leest het eindantwoord uit het transcript.
+    Standaard alleen lezen; de tijdelijke conversatiemap wordt na afloop opgeruimd."""
+    api = os.environ.get("GEMINI_AGENTAPI", "").strip()
+    bin_pad = Path(api) if api else (AGENTAPI if AGENTAPI.exists() else Path(shutil.which("agentapi") or ""))
+    if not bin_pad or not bin_pad.is_file():
+        raise RuntimeError("agentapi niet gevonden (~/.gemini/antigravity/bin/agentapi)")
+    tier = model if model in ("pro", "flash", "flash_lite") else "pro"
+    map_regel = f"\nJe werkmap om alleen-lezend in te kijken is: {werkmap}\n" if werkmap else ""
+    volledig = (
+        f"{systeem.strip()}{map_regel}\n"
+        "BELANGRIJK: Alleen lezen. Wijzig geen bestanden, maak geen commits, start geen servers of achtergrondsessies.\n\n"
+        f"---\n\n{prompt}"
+    )
+    cmd = [str(bin_pad), "new-conversation", f"--model={tier}", "--title=AI-Overleg", volledig]
+    code, uit, fout = _draai(cmd, "", min(timeout, 30), registreer, werkmap)
+    if code != 0:
+        raise RuntimeError(f"gemini agentapi gaf exitcode {code}: {(fout.strip() or uit.strip())[:500]}")
+    try:
+        cid = json.loads(uit)["response"]["newConversation"]["conversationId"]
+    except (ValueError, KeyError, TypeError) as e:
+        raise RuntimeError(f"kon conversationId niet lezen uit agentapi: {uit[:300]}") from e
+    brain = Path(os.environ.get("GEMINI_BRAIN_DIR", "").strip() or BRAIN_DIR)
+    pad = brain / cid / ".system_generated" / "logs" / "transcript.jsonl"
+    pad_vol = brain / cid / ".system_generated" / "logs" / "transcript_full.jsonl"
+    einde = time.monotonic() + timeout
+    try:
+        while time.monotonic() < einde:
+            bron = pad_vol if pad_vol.is_file() else pad
+            if bron.is_file():
+                try:
+                    regels = [json.loads(r) for r in bron.read_text(encoding="utf-8", errors="replace").splitlines() if r.strip()]
+                except (OSError, ValueError):
+                    regels = []
+                for r in reversed(regels):
+                    if (r.get("type") == "PLANNER_RESPONSE" and r.get("status") == "DONE"
+                            and not r.get("tool_calls") and (r.get("content") or "").strip()):
+                        return r["content"].strip()
+                    if r.get("status") == "ERROR":
+                        raise RuntimeError(f"gemini fout in sessie {cid}: {r.get('content', 'onbekend')[:400]}")
+            time.sleep(0.5)
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    finally:
+        if not os.environ.get("GEMINI_BEWAAR_SESSIE"):
+            shutil.rmtree(brain / cid, ignore_errors=True)
+            for extra in (brain.parent / "presence" / f"{cid}.lock",
+                          brain.parent / "conversations" / f"{cid}.pb"):
+                try:
+                    extra.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
 def schoon_codex(ruw: str) -> str:
     """Codex exec zet logregels rond het antwoord. Haal die eruit."""
     regels = ruw.splitlines()

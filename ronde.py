@@ -42,10 +42,15 @@ SPREKERS = {
     ("codex", "controle"): "CONTROLE (Codex)",
     ("codex", "fout"): "FOUT (Codex stopte)",
     ("claude", "verwerking"): "VERWERKING (Claude)",
+    ("gemini", "advies"): "ADVIES (Gemini)",
+    ("gemini", "fout"): "FOUT (Gemini stopte)",
+    ("codex", "overleg"): "OVERLEG (Codex)",
+    ("gemini", "overleg"): "OVERLEG (Gemini)",
+    ("claude", "overleg"): "OVERLEG (Claude)",
 }
 NAAM = re.compile(r"^\d{8}-\d{6}-codex(-\d+)?$")
 BESTANDEN = ("board.jsonl", "onderwerp.json", "transcript.md")
-UITKOMST = ("controle", "fout")   # een ronde krijgt er precies een
+UITKOMST = ("controle", "fout")   # een ronde krijgt per kant precies een uitkomst
 SLOT_WACHT_S = 10                 # zo lang wacht een beurt op een andere beurt van dezelfde ronde
 _NA_LEZEN = None                  # alleen voor tests: aangeroepen binnen het slot, tussen lezen en schrijven
 STAPPEN_NIEUW = ("gereserveerd", "naam", "zichtbaar")
@@ -194,9 +199,10 @@ def voeg_toe(pad: Path, kant: str, soort: str, tekst: str, model: str = "",
         beurten = _beurten(pad)
         if not beurten or beurten[0].get("soort") != "opdracht":
             raise ValueError(f"ronde {pad.name} begint niet met een opdracht")
-        uitkomst = [b["soort"] for b in beurten if b.get("soort") in UITKOMST]
-        if soort in UITKOMST and uitkomst:
-            raise ValueError(f"ronde {pad.name} heeft al een uitkomst ({uitkomst[0]})")
+        uitkomst = [b["soort"] for b in beurten if b.get("soort") in ("controle", "fout", "advies", "overleg")]
+        eigen_uitkomst = [b["soort"] for b in beurten if b.get("kant") == kant and b.get("soort") in ("controle", "fout", "advies")]
+        if soort in ("controle", "fout", "advies") and eigen_uitkomst:
+            raise ValueError(f"ronde {pad.name} heeft al een uitkomst voor {kant} ({eigen_uitkomst[0]})")
         if soort == "verwerking" and not uitkomst:
             raise ValueError(f"ronde {pad.name} heeft nog geen antwoord of fout van Codex")
         if _NA_LEZEN:
@@ -277,7 +283,7 @@ def resten(ouder_dan_s: float = RESTEN_OUDER_DAN_S) -> list:
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Ronde tussen Claude en Codex in het dashboard")
+    p = argparse.ArgumentParser(description="Ronde tussen Claude, Codex en Gemini in het dashboard")
     p.add_argument("--runs", help="andere runs-map (tests en zelftest)")
     sub = p.add_subparsers(dest="actie", required=True)
 
@@ -292,8 +298,8 @@ def main(argv=None) -> int:
 
     b = sub.add_parser("beurt")
     b.add_argument("ronde")
-    b.add_argument("--kant", required=True, choices=["claude", "codex"])
-    b.add_argument("--soort", required=True, choices=["controle", "fout", "verwerking"])
+    b.add_argument("--kant", required=True, choices=["claude", "codex", "gemini"])
+    b.add_argument("--soort", required=True, choices=["controle", "fout", "verwerking", "advies", "overleg"])
     b.add_argument("--model", default="")
     b.add_argument("--duur", default="")
     b.add_argument("--tijd", default="")

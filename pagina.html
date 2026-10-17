@@ -18,6 +18,9 @@
   --gpt: #1f7a6b;
   --gpt-vlak: #eaf5f2;
   --gpt-rand: #c3e0d8;
+  --gemini: #2b6cb0;
+  --gemini-vlak: #ebf4ff;
+  --gemini-rand: #bee3f8;
   --mens: #5a5fb8;
   --mens-vlak: #eeeefb;
   --rood: #b83a2c;
@@ -36,6 +39,9 @@
     --gpt: #5fc0ab;
     --gpt-vlak: #16261f;
     --gpt-rand: #27453b;
+    --gemini: #63b3ed;
+    --gemini-vlak: #172330;
+    --gemini-rand: #2a4365;
     --mens: #9aa0f0;
     --mens-vlak: #1e2030;
     --rood: #f08a7d;
@@ -110,11 +116,13 @@ button.klein { padding: 6px 10px; font-size: 13px; font-weight: 500; }
 .beurt { display: flex; flex-direction: column; gap: 6px; max-width: 74%; }
 .beurt.claude { align-self: flex-start; }
 .beurt.codex { align-self: flex-end; align-items: flex-end; }
+.beurt.gemini { align-self: flex-end; align-items: flex-end; }
 .beurt.mens { align-self: center; max-width: 82%; align-items: center; }
 .etiket { font-size: 12px; font-weight: 650; display: flex; gap: 8px; align-items: baseline; }
 .etiket .grijs { color: var(--zacht); font-weight: 400; }
 .beurt.claude .etiket { color: var(--claude); }
 .beurt.codex .etiket { color: var(--gpt); }
+.beurt.gemini .etiket { color: var(--gemini); }
 .beurt.mens .etiket { color: var(--mens); }
 .bel {
   background: var(--vlak); border: 1px solid var(--rand); border-radius: 14px;
@@ -122,6 +130,7 @@ button.klein { padding: 6px 10px; font-size: 13px; font-weight: 500; }
 }
 .beurt.claude .bel { background: var(--claude-vlak); border-color: var(--claude-rand); border-bottom-left-radius: 4px; }
 .beurt.codex .bel { background: var(--gpt-vlak); border-color: var(--gpt-rand); border-bottom-right-radius: 4px; }
+.beurt.gemini .bel { background: var(--gemini-vlak); border-color: var(--gemini-rand); border-bottom-right-radius: 4px; }
 .beurt.mens .bel { background: var(--mens-vlak); border-style: dashed; border-color: var(--mens); text-align: center; }
 
 /* Opdrachtmodus: brede blokken met een diff eronder. */

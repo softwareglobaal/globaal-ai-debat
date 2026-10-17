@@ -54,6 +54,17 @@ class Rondes(unittest.TestCase):
         self.assertNotIn("rapport", onderwerp)  # lege velden blijven weg
         self.assertIn("VERWERKING (Claude)", (debat.RUNS / naam / "transcript.md").read_text(encoding="utf-8"))
 
+    def test_driehoeksoverleg_codex_en_gemini(self):
+        naam = ronde.nieuw("Overleg: proef", "Onderzoek x.py.", project="/tmp/p")
+        pad = ronde.run_pad(naam)
+        ronde.voeg_toe(pad, "codex", "overleg", "1. Codex eerste blik", model="gpt-6-sol", duur=10)
+        ronde.voeg_toe(pad, "gemini", "overleg", "1. Gemini vult aan", model="gemini-pro", duur=8)
+        ronde.voeg_toe(pad, "codex", "controle", "**Klaar met kanttekeningen.** Gezamenlijk besluit", model="gpt-6-sol", duur=9)
+        ronde.voeg_toe(pad, "claude", "verwerking", "Uitgevoerd zoals besproken")
+        beurten = self.board(naam)
+        self.assertEqual([b["kant"] for b in beurten], ["claude", "codex", "gemini", "codex", "claude"])
+        self.assertEqual([b["soort"] for b in beurten], ["opdracht", "overleg", "overleg", "controle", "verwerking"])
+
     def test_zelfde_seconde_geeft_eigen_ronde(self):
         a = ronde.nieuw("a", "x", tijd="2026-10-15T16:00:00")
         b = ronde.nieuw("b", "y", tijd="2026-10-15T16:00:00")

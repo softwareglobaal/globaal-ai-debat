@@ -1,0 +1,86 @@
+#!/bin/bash
+# overleg.sh v1.0 (17-10-2026) - de vaste manier waarop Claude met Codex EN Gemini samen in overleg gaat.
+# Elke ronde komt met alle tussenbeurten in het dashboard van ai-debat (http://127.0.0.1:8099).
+# Bron: repo softwareglobaal/globaal-ai-debat; ~/.claude/tools/overleg.sh verwijst hierheen.
+#
+# Gebruik:
+#   overleg.sh -C <map> -o <rapport.md> [-t "<titel>"] [-b <diepte>] [-m codex-model] [-e niveau] [-g pro|flash|flash_lite] [-T seconden] < opdracht.md
+#   overleg.sh --verwerking <rapport.md> < verwerkt.md    Claude's verwerking als laatste beurt van die ronde
+#   overleg.sh --zelftest
+#   Gemini werkt alleen vanuit de Terminal van Antigravity: Terminal > New Terminal.
+#
+# Standaard:
+#   -b 2                Codex analyseert -> Gemini analyseert + vult aan/corrigeert -> Codex trekt gezamenlijke eindconclusie.
+#   Beide adviseurs lezen alleen en wijzigen niets.
+#   -g pro              Gemini 4 Argon (Pro) via lokale Antigravity agentapi.
+#   -T 1200             Timeout per Codex- en Gemini-beurt, in seconden (> 0).
+# Uitvoer: volledig verslag + gezamenlijke eindconclusie in <rapport.md> en op stdout, rondenaam in <rapport.md>.ronde,
+# en alle beurten live in ~/dev/globaal-ai-debat/runs/.
+
+set -u
+AI_DEBAT="${AI_DEBAT:-$HOME/dev/globaal-ai-debat}"
+OVERLEG="$AI_DEBAT/overleg.py"
+RONDE="$AI_DEBAT/ronde.py"
+CODEX_SH="$AI_DEBAT/codex.sh"
+PY="${CODEX_SH_PY:-$AI_DEBAT/.venv/bin/python}"
+[ -x "$PY" ] || PY="$(command -v python3 || echo /opt/homebrew/bin/python3)"
+AGENTAPI="${GEMINI_AGENTAPI:-$HOME/.gemini/antigravity/bin/agentapi}"
+
+fout() { echo "overleg.sh: $*" >&2; exit 2; }
+
+waarde() { [ "$1" -ge 2 ] || fout "$2 vraagt een waarde (zie --help)"; }
+
+MAP="" RAPPORT="" TITEL="" DIEPTE="2" MODEL="" NIVEAU="" GEMINI="pro" TIMEOUT="1200" ZELFTEST=0 VERWERK=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -C) waarde $# "$1"; MAP="$2"; shift 2 ;;
+    -o) waarde $# "$1"; RAPPORT="$2"; shift 2 ;;
+    -t) waarde $# "$1"; TITEL="$2"; shift 2 ;;
+    -b) waarde $# "$1"; DIEPTE="$2"; shift 2 ;;
+    -m) waarde $# "$1"; MODEL="$2"; shift 2 ;;
+    -e) waarde $# "$1"; NIVEAU="$2"; shift 2 ;;
+    -g) waarde $# "$1"; GEMINI="$2"; shift 2 ;;
+    -T) waarde $# "$1"; TIMEOUT="$2"; shift 2 ;;
+    --verwerking) waarde $# "$1"; VERWERK="$2"; shift 2 ;;
+    --zelftest) ZELFTEST=1; shift ;;
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
+    *) fout "onbekende optie: $1 (zie --help)" ;;
+  esac
+done
+
+[ -f "$OVERLEG" ] || fout "overleg.py niet gevonden in $AI_DEBAT"
+[ -f "$RONDE" ] || fout "ronde.py niet gevonden in $AI_DEBAT"
+[ -x "$PY" ] || fout "geen python gevonden ($PY)"
+
+if [ -n "$VERWERK" ]; then
+  exec "$CODEX_SH" --verwerking "$VERWERK"
+fi
+
+[[ "${ANTIGRAVITY_LS_ADDRESS:-}" =~ [^[:space:]] ]] || [[ "${GEMINI_AGENTAPI:-}" =~ [^[:space:]] ]] \
+  || fout "Gemini-toegang ontbreekt; start dit in de Terminal van Antigravity: Terminal > New Terminal"
+
+[ -x "$AGENTAPI" ] || fout "Gemini agentapi niet gevonden op $AGENTAPI (is Antigravity geinstalleerd?)"
+
+if [ "$ZELFTEST" = 1 ]; then
+  T="$(mktemp -d "${TMPDIR:-/tmp}/overleg-zelftest.XXXXXX")"
+  trap 'rm -rf "$T"' EXIT
+  echo "Antwoord met precies een woord: KLAAR" \
+    | CODEX_SH_RUNS="$T/runs" "$0" -C "$T" -o "$T/antwoord.md" -t "zelftest-overleg" -b 1 -e low -g flash -T "$TIMEOUT" >/dev/null 2>&1 \
+    || { echo "zelftest MISLUKT (overleg)" >&2; exit 1; }
+  echo "zelftest verwerkt" | CODEX_SH_RUNS="$T/runs" "$0" --verwerking "$T/antwoord.md" >/dev/null 2>&1 \
+    || { echo "zelftest MISLUKT (verwerking)" >&2; exit 1; }
+  echo "zelftest geslaagd: Codex + Gemini + Claude verwerking in dashboard"
+  exit 0
+fi
+
+[ -n "$MAP" ] && [ -d "$MAP" ] || fout "-C <map> ontbreekt of bestaat niet"
+[ -n "$RAPPORT" ] || fout "-o <rapport.md> ontbreekt"
+[ -t 0 ] && fout "geef de opdracht via stdin (< opdracht.md of een heredoc)"
+
+EXTRA=()
+[ -n "${CODEX_SH_RUNS:-}" ] && EXTRA+=(--runs "$CODEX_SH_RUNS")
+[ -n "$TITEL" ] && EXTRA+=(-t "$TITEL")
+[ -n "$MODEL" ] && EXTRA+=(-m "$MODEL")
+[ -n "$NIVEAU" ] && EXTRA+=(-e "$NIVEAU")
+
+exec "$PY" "$OVERLEG" -C "$MAP" -o "$RAPPORT" -b "$DIEPTE" -g "$GEMINI" -T "$TIMEOUT" ${EXTRA[@]+"${EXTRA[@]}"}

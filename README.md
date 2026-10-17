@@ -106,6 +106,19 @@ codex.sh --zelftest
 `ronde.py` schrijft de runs weg in hetzelfde formaat als een debat. Zo staat al het werk van
 Claude en Codex samen op één plek.
 
+Voor overleg met Codex én Gemini gebruik je `overleg.sh` vanuit de **Terminal van
+Antigravity** (`Terminal > New Terminal`). Het schrijft hun beurten en de gezamenlijke
+eindconclusie in het dashboard en in het rapport:
+
+```
+overleg.sh -C <map> -o <rapport.md> [-t "<titel>"] [-b 2] [-m codex-model] [-e niveau] [-g pro|flash|flash_lite] [-T seconden] < opdracht.md
+overleg.sh --verwerking <rapport.md> < verwerkt.md
+```
+
+`-b` bepaalt de diepte, `-m` het Codex-model, `-e` het redeneerniveau, `-g` het
+Gemini-model en `-T` de timeout per beurt (standaard 1200 seconden). Met `--verwerking`
+voegt Claude zijn slotbeurt aan dezelfde ronde toe.
+
 Na een harde stop (kill -9, stroomuitval) kan er een onvolledige rondemap achterblijven. Die
 staat niet in het dashboard; `python ronde.py resten` toont ze, `--weg` ruimt ze op.
 
