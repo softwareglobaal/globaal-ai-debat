@@ -29,13 +29,14 @@ import ronde
 
 SYSTEEM_OVERLEG = """Je neemt deel aan een driehoeksoverleg tussen Claude, Codex (ChatGPT) en Gemini voor Mehdi Chegini.
 
-Doel en toon (HARDE REGEL VAN MEHDI):
-- Mehdi leest mee in het dashboard. Hij wil GEEN technisch jargon, geen lange lappen tekst en geen blabla.
-- Schrijf KORT, BONDIG en in GEWONE MENSENTAAL (alles samen maximaal 1 A4, ca. 350-450 woorden per beurt).
-- Leg elk punt uit aan de hand van wat Mehdi in de praktijk merkt (bijv. "Als je twee afspraken tegelijk hebt, word je voor de tweede niet gebeld"), niet in codetaal.
-- Onderaan elk punt zet je op één korte regel voor Claude/Shaniel de technische vindplaats en fix (`Techniek voor Claude: bestand:regel — fix`).
-- Het maakt NIET uit wie gelijk heeft; alleen het resultaat voor het project telt. Vul elkaars blinde vlekken aan en corrigeer fouten direct.
-- Alleen lezen: wijzig geen bestanden, maak geen commits, raak geen live systemen, mail of agenda aan.
+Doel en werkwijze (HARDE REGELS VAN MEHDI):
+- Mehdi wil zo weinig mogelijk nodig zijn. Jullie zijn altijd met drieën (Claude, Codex, Gemini) om hem te ontlasten.
+- Toets elkaars ideeën scherp af: zoek actief naar elkaars zwaktes en blinde vlekken, anticipeer op wat er mis kan gaan, versterk elkaars extracties en vul aan wat een ander miste.
+- Beslisregel 2-op-3 (meerderheid op basis van feiten en `bestand:regel`): minstens twee van de drie moeten akkoord zijn. Zijn 2 of 3 AI's het eens (3-0 of 2-1), dan wordt dat besluit zelfstandig uitgevoerd zonder Mehdi lastig te vallen.
+- Escalatieregel naar Mehdi: betrek Mehdi ALLEEN als jullie alle drie iets anders zeggen (1-1-1 verdeeldheid zonder meerderheid) of als het een zakelijke/financiële keuze of toestemmingsgrens betreft (verwijderen, extern versturen, ondertekenen).
+- Schrijf KORT, BONDIG en in GEWONE MENSENTAAL (alles samen maximaal 1 A4, ca. 350-450 woorden per beurt). Geen technisch blabla voor Mehdi.
+- Leg elk punt uit aan de hand van wat Mehdi in de praktijk merkt, met daaronder op één korte regel voor Claude/Shaniel de technische vindplaats en fix (`Techniek voor Claude: bestand:regel - fix`).
+- Alleen lezen tijdens het overleg: wijzig geen bestanden, maak geen commits, raak geen live systemen, mail of agenda aan.
 - Nederlands. Geen emoji, geen em dash. Beslissing altijd op de eerste regel.
 """
 
@@ -101,23 +102,25 @@ def bouw_overleg_prompt(opdracht_tekst: str, geschiedenis: list, spreker: str, i
             delen.append("")
     if not geschiedenis:
         delen.append(
-            f"Jij bent {spreker}. Onderzoek de code/vraag en geef je eerste bevindingen KORT EN IN MENSENTAAL "
-            "(max 350 woorden, beslissing eerst, per punt wat het voor Mehdi betekent + 1 regel techniek voor Claude)."
+            f"Jij bent {spreker}. Onderzoek de code/vraag, toets de aannames en extracties op zwaktes en blinde vlekken, "
+            "en geef je eerste bevindingen KORT EN IN MENSENTAAL (max 350 woorden, beslissing eerst, per punt wat het voor "
+            "Mehdi betekent + 1 regel techniek met `bestand:regel` voor Claude)."
         )
     elif not is_slot:
         delen.append(
-            f"Jij bent {spreker}. Reageer kort en in gewone mensentaal (max 350 woorden) op de vorige bijdrage: "
-            "zeg waar je het mee eens bent, corrigeer wat niet klopt en voeg toe wat gemist werd."
+            f"Jij bent {spreker}. Toets de vorige bijdrage en de opdracht scherp: zeg waar je het mee eens bent, "
+            "wijs zwaktes of gemiste randgevallen aan, versterk de extracties met extra bewijs uit de code/bronnen "
+            "en anticipeer op wat er mis kan gaan (max 350 woorden, gewone mensentaal)."
         )
     else:
         delen.append(
             f"Jij bent {spreker}. Maak nu de GEZAMENLIJKE EINDCONCLUSIE (max 1 A4 / 400 woorden):\n"
-            "Deel 1 — Voor Mehdi (in gewone mensentaal, zonder code):\n"
-            "- Beslissing in 1 zin.\n"
-            "- Kort per punt wat er nog mis kon gaan en hoe we het oplossen.\n"
-            "- Eventuele keuzes die alleen Mehdi moet maken.\n\n"
-            "Deel 2 — Voor Claude en Shaniel (compact technisch lijstje):\n"
-            "- Per punt: nummer, ernst, `bestand:regel` en de exacte aanpassing."
+            "Deel 1 - Voor Mehdi (in gewone mensentaal, zonder code):\n"
+            "- Beslissing in 1 zin (vermeld of er een 3-0 of 2-1 meerderheid is die direct wordt uitgevoerd, of een 1-1-1 verdeeldheid voor Mehdi).\n"
+            "- Kort per punt welke zwaktes zijn gevonden/aangevuld en hoe we ze oplossen.\n"
+            "- Alleen keuzes voor Mehdi als alle drie de AI's iets anders zeggen (1-1-1) of bij een echte zakelijke keuze.\n\n"
+            "Deel 2 - Voor Claude en Shaniel (compact technisch lijstje):\n"
+            "- Per punt: nummer, ernst, stemverhouding (3-0, 2-1 of 1-1-1), `bestand:regel` en de exacte aanpassing."
         )
     return "\n".join(delen)
 
@@ -132,6 +135,39 @@ def draai_overleg(werkmap: Path, rapport: Path, titel: str, opdracht_tekst: str,
     rechtstreeks = bool(adres and token and not eigen_api
                        and not os.environ.get("GEMINI_BRAIN_DIR", "").strip())
     if not ((adres and token) or eigen_api):
+        if not os.environ.get("GEMINI_BRAIN_DIR", "").strip():
+            try:
+                import brug
+                if brug.brug_leeft(brug.brugmap()):
+                    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as f:
+                        f.write(opdracht_tekst)
+                        tmp_opdracht = f.name
+                    try:
+                        brug_argv = [
+                            "indienen", "-C", str(werkmap), "-o", str(rapport),
+                            "-t", titel or "Overleg", "--bestand", tmp_opdracht,
+                            "-b", str(rondes), "-g", gemini_model, "-T", str(timeout), "--wacht",
+                        ]
+                        if codex_model:
+                            brug_argv += ["-m", codex_model]
+                        if codex_niveau:
+                            brug_argv += ["-e", codex_niveau]
+                        if gemini_niveau:
+                            brug_argv += ["-G", gemini_niveau]
+                        if claude_model:
+                            brug_argv += ["-c", claude_model]
+                        if claude_niveau:
+                            brug_argv += ["-E", claude_niveau]
+                        if met_claude:
+                            brug_argv += ["--met-claude"]
+                        code = brug.main(brug_argv)
+                        if code == 0 and rapport.is_file():
+                            print(rapport.read_text(encoding="utf-8", errors="replace"))
+                        return code
+                    finally:
+                        Path(tmp_opdracht).unlink(missing_ok=True)
+            except Exception:
+                pass
         print("overleg.py: Gemini-toegang ontbreekt; start dit in de Terminal van Antigravity: "
               "Terminal > New Terminal", file=sys.stderr)
         return 2

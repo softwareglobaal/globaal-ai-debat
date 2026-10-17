@@ -72,8 +72,36 @@ if [ -n "$VERWERK" ]; then
 fi
 
 if ! [[ "${ANTIGRAVITY_LS_ADDRESS:-}" =~ [^[:space:]] ]] || ! [[ "${ANTIGRAVITY_CSRF_TOKEN:-}" =~ [^[:space:]] ]]; then
-  [[ "${GEMINI_AGENTAPI:-}" =~ [^[:space:]] ]] \
-    || fout "Gemini-toegang ontbreekt; start dit in de Terminal van Antigravity: Terminal > New Terminal"
+  if ! [[ "${GEMINI_AGENTAPI:-}" =~ [^[:space:]] ]]; then
+    if [ -z "${GEMINI_BRAIN_DIR:-}" ] && [ -f "$AI_DEBAT/brug.py" ] \
+       && "$PY" -c "import sys; sys.path.insert(0, '$AI_DEBAT'); import brug; sys.exit(0 if brug.brug_leeft(brug.brugmap()) else 1)" 2>/dev/null; then
+      if [ "$ZELFTEST" = 1 ]; then
+        mkdir -p "$HOME/.overleg-brug"
+        T="$(mktemp -d "$HOME/.overleg-brug/zelftest.XXXXXX")"
+        trap 'rm -rf "$T"' EXIT
+        echo "Antwoord met precies een woord: KLAAR" \
+          | "$0" -C "$T" -o "$T/antwoord.md" -t "zelftest-overleg" -b 1 -e low -g gemini-3.8-flash -G low -T "$TIMEOUT" >/dev/null 2>&1 \
+          || { echo "zelftest MISLUKT (overleg)" >&2; exit 1; }
+        echo "zelftest verwerkt" | "$0" --verwerking "$T/antwoord.md" >/dev/null 2>&1 \
+          || { echo "zelftest MISLUKT (verwerking)" >&2; exit 1; }
+        echo "zelftest geslaagd: Codex + Gemini + Claude verwerking in dashboard"
+        exit 0
+      fi
+      [ -n "$MAP" ] && [ -d "$MAP" ] || fout "-C <map> ontbreekt of bestaat niet"
+      [ -n "$RAPPORT" ] || fout "-o <rapport.md> ontbreekt"
+      [ -t 0 ] && fout "geef de opdracht via stdin (< opdracht.md of een heredoc)"
+      BRUG_ARGS=(-C "$MAP" -o "$RAPPORT" -t "${TITEL:-Overleg}" -b "$DIEPTE" -g "$GEMINI" -T "$TIMEOUT" --wacht)
+      [ -n "$MODEL" ] && BRUG_ARGS+=(-m "$MODEL")
+      [ -n "$NIVEAU" ] && BRUG_ARGS+=(-e "$NIVEAU")
+      [ -n "$GEMINI_NIVEAU" ] && BRUG_ARGS+=(-G "$GEMINI_NIVEAU")
+      [ -n "$CLAUDE_MODEL" ] && BRUG_ARGS+=(-c "$CLAUDE_MODEL")
+      [ -n "$CLAUDE_NIVEAU" ] && BRUG_ARGS+=(-E "$CLAUDE_NIVEAU")
+      [ "$MET_CLAUDE" = 1 ] && BRUG_ARGS+=(--met-claude)
+      "$PY" "$AI_DEBAT/brug.py" indienen "${BRUG_ARGS[@]}" >/dev/null && cat "$RAPPORT"
+      exit $?
+    fi
+    fout "Gemini-toegang ontbreekt; start dit in de Terminal van Antigravity: Terminal > New Terminal"
+  fi
 fi
 
 if [[ "${GEMINI_AGENTAPI:-}" =~ [^[:space:]] ]] || [[ "${GEMINI_BRAIN_DIR:-}" =~ [^[:space:]] ]] \
