@@ -430,10 +430,20 @@ def claim_oudste(basis: Path) -> str | None:
 def _leider_klaar(proces: subprocess.Popen) -> bool:
     """Is de leider gestopt? Zonder op te ruimen (WNOWAIT): zolang hij als zombie
     bestaat, blijft zijn groepsnummer bezet en kan het niet aan een ander proces gaan."""
+    waitid = getattr(os, "waitid", None)
+    if waitid is not None:
+        try:
+            return waitid(os.P_PID, proces.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+        except ChildProcessError:
+            return True
+    # Python ouder dan 3.13 heeft op macOS geen os.waitid: vraag ps of de leider al zombie is.
     try:
-        return os.waitid(os.P_PID, proces.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
-    except ChildProcessError:
-        return True
+        stand = subprocess.run(
+            ["/bin/ps", "-o", "stat=", "-p", str(proces.pid)], capture_output=True,
+            text=True, timeout=1, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return False  # Onbekend: blijf wachten tot de tijdslimiet, dan volgt SIGKILL.
+    return not stand or stand.startswith("Z")
 
 
 def _stop_procesgroep(proces: subprocess.Popen) -> bytes:

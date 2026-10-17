@@ -1,5 +1,6 @@
 """Overleg-brug met alleen tijdelijke mappen en een nep-overlegscript."""
 
+import contextlib
 import json
 import http.server
 import os
@@ -20,6 +21,7 @@ import brug
 
 HIER = Path(__file__).parent
 STUB = """#!{python}
+import contextlib
 import json
 import os
 import signal
@@ -1167,7 +1169,17 @@ class BrugTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "procesgroepen vereisen POSIX")
     def test_stop_procesgroep_signaleert_alleen_niet_opgeruimde_leider(self):
-        pidpad = self.root / "kleinkind.pid"
+        # Met os.waitid (Python 3.13+ op macOS) en met de ps-terugval (oudere Python).
+        for zonder_waitid in (False, True):
+            with self.subTest(zonder_waitid=zonder_waitid):
+                if not zonder_waitid and not hasattr(os, "waitid"):
+                    self.skipTest("os.waitid ontbreekt in deze Python")
+                with (mock.patch.object(brug.os, "waitid", None, create=True)
+                      if zonder_waitid else contextlib.nullcontext()):
+                    self._stop_procesgroep_proef(zonder_waitid)
+
+    def _stop_procesgroep_proef(self, zonder_waitid):
+        pidpad = self.root / f"kleinkind-{int(zonder_waitid)}.pid"
         # De leider stopt meteen op TERM; het kleinkind in dezelfde groep negeert TERM.
         proces = subprocess.Popen(
             ["/bin/sh", "-c", "(trap '' TERM; exec sleep 30) & echo $! > \"$1\"; "
@@ -1183,8 +1195,11 @@ class BrugTests(unittest.TestCase):
             oproepen.append((sig, proces.returncode))
             return echte_killpg(groep, sig)
 
+        begin = time.monotonic()
         with mock.patch.object(brug.os, "killpg", side_effect=killpg):
             brug._stop_procesgroep(proces)
+        # Het einde van de leider moet herkend zijn, niet pas na de tijdslimiet van 7 s.
+        self.assertLess(time.monotonic() - begin, 5)
         self.assertIsNotNone(proces.returncode)
         self.assertIn(signal.SIGKILL, [sig for sig, _ in oproepen])
         self.assertTrue(all(code is None for _, code in oproepen),
