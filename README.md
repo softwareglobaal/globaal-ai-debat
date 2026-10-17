@@ -119,6 +119,16 @@ overleg.sh --verwerking <rapport.md> < verwerkt.md
 Gemini-model en `-T` de timeout per beurt (standaard 1200 seconden). Met `--verwerking`
 voegt Claude zijn slotbeurt aan dezelfde ronde toe.
 
+### Overleg-brug
+
+Mehdi start eenmaal per dag in de Terminal van Antigravity: `~/dev/globaal-ai-debat/brug.sh`.
+Het venster blijft open. Claude kan daarna een read-only overleg indienen met
+`python brug.py indienen -C <map> -o <rapport.md> -t "<titel>" --wacht < opdracht.md`;
+`python brug.py status` toont de hartslag en wachtrij. De brug bewaart opdrachten onder
+`~/.overleg-brug/` en aanvaardt alleen de vaste overlegopties, nooit vrije commando's.
+Het Antigravity-adres en de sleutel blijven in de omgeving van de luisteraar en gaan
+alleen mee naar zijn kindproces `overleg.sh`.
+
 Na een harde stop (kill -9, stroomuitval) kan er een onvolledige rondemap achterblijven. Die
 staat niet in het dashboard; `python ronde.py resten` toont ze, `--weg` ruimt ze op.
 

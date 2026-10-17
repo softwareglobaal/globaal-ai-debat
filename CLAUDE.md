@@ -157,7 +157,7 @@ Meld aan de gebruiker welke modellen werken, en waar de app staat.
   Nooit versoepelen; `test_grendels.py` bewaakt het.
 - **De uitvoerder draait met `acceptEdits`, nooit met `bypassPermissions`.** Dan kan hij
   alleen in zijn worktree schrijven. Bash wordt apart toegestaan via het vinkje.
-- **Na elke wijziging:** `python -m unittest test_grendels test_ronde test_codex_sh test_meting test_overleg -v`.
+- **Na elke wijziging:** `python -m unittest test_grendels test_ronde test_codex_sh test_meting test_overleg test_brug -v`.
   Moet groen zijn voor je commit; de CI draait hetzelfde.
 - **Codex-rondes lopen via `codex.sh`.** Claude roept Codex buiten de interface aan met
   `~/.claude/tools/codex.sh` (een symlink naar `codex.sh` hier). Elke ronde komt via `ronde.py`
@@ -215,6 +215,8 @@ Dit zijn dingen die al een keer tijd hebben gekost. Kijk hier eerst.
 | `test_meting.py` | tests door de app, opdrachtstroom zonder ChatGPT, resultaat, standpunt, vonnis, API-sleutel, briefingcontrole; met nagebootste modellen; ook in CI |
 | `overleg.py` en `overleg.sh` | driehoeksoverleg met Codex en Gemini; start vanuit de Terminal van Antigravity |
 | `test_overleg.py` | toegang, timeout en volledige overlegstroom met nagebootste modellen; ook in CI |
+| `brug.py` en `brug.sh` | lokale wachtrij en luisteraar voor read-only overleg; start `~/dev/globaal-ai-debat/brug.sh` in Antigravity, de sleutel blijft daar |
+| `test_brug.py` | wachtrij, toetsing, slot, hartslag, geheimen en tijdslimiet met een nep-overleg; ook in CI |
 | `docs/codex/` | opdracht, antwoord en verwerking van de Codex-rondes over deze repo |
 | `start.command` | macOS: dubbelklik in Finder |
 | `modellen.standaard.json` | veilige lijst tot `controleer_modellen.py` heeft gedraaid |
