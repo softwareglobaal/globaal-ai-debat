@@ -41,7 +41,13 @@ Doel en toon (HARDE REGEL VAN MEHDI):
 
 
 def _codex_config(sleutel: str) -> str:
-    cfg = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
+    basis = os.environ.get("CODEX_HOME", "").strip()
+    if not basis:
+        try:
+            basis = str(Path.home() / ".codex")
+        except RuntimeError:  # geen thuismap (bv. gewiste omgeving op Windows): dan geen config
+            return ""
+    cfg = Path(basis) / "config.toml"
     if not cfg.is_file():
         return ""
     for regel in cfg.read_text(encoding="utf-8", errors="replace").splitlines():
