@@ -18,7 +18,7 @@
 #   Beide adviseurs lezen alleen en wijzigen niets.
 #   -m / -e             Standaard uit ~/.codex/config.toml (bijv. gpt-6-sol / ultra of xhigh).
 #   -g gemini-4-argon   Gemini 4 Argon via lokale Antigravity LanguageServerService (ook: gemini-3.8-flash, pro, flash).
-#   -G high             Gemini denkniveau: high, medium of low.
+#   -G high             Gemini denkniveau: high, medium of low (zonder -G: high, bij flash_lite low).
 #   -c / -E             Claude-model en denkniveau (max, xhigh, high, medium, low); standaard uit actieve Claude-sessie.
 #   --met-claude        Laat Claude ook zelfstandig een overlegbeurt draaien via de CLI.
 #   -T 1200             Timeout per beurt, in seconden (> 0).
@@ -39,8 +39,8 @@ fout() { echo "overleg.sh: $*" >&2; exit 2; }
 waarde() { [ "$1" -ge 2 ] || fout "$2 vraagt een waarde (zie --help)"; }
 
 MAP="" RAPPORT="" TITEL="" DIEPTE="2" MODEL="" NIVEAU=""
-GEMINI="gemini-4-argon" GEMINI_NIVEAU="high"
-CLAUDE_MODEL="" CLAUDE_NIVEAU="" MET_CLAUDE=0
+GEMINI="gemini-4-argon" GEMINI_NIVEAU=""
+CLAUDE_MODEL="${CLAUDE_MODEL:-}" CLAUDE_NIVEAU="" MET_CLAUDE=0
 TIMEOUT="1200" ZELFTEST=0 VERWERK=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -71,12 +71,16 @@ if [ -n "$VERWERK" ]; then
   exec "$CODEX_SH" --verwerking "$VERWERK"
 fi
 
-if ! [[ "${ANTIGRAVITY_LS_ADDRESS:-}" =~ [^[:space:]] ]] && ! [[ "${GEMINI_AGENTAPI:-}" =~ [^[:space:]] ]]; then
-  "$PY" -c "import sys; sys.path.insert(0, '$AI_DEBAT'); import debat; a, t = debat._antigravity_omgeving(); sys.exit(0 if (a and t) else 1)" 2>/dev/null \
+if ! [[ "${ANTIGRAVITY_LS_ADDRESS:-}" =~ [^[:space:]] ]] || ! [[ "${ANTIGRAVITY_CSRF_TOKEN:-}" =~ [^[:space:]] ]]; then
+  [[ "${GEMINI_AGENTAPI:-}" =~ [^[:space:]] ]] \
     || fout "Gemini-toegang ontbreekt; start dit in de Terminal van Antigravity: Terminal > New Terminal"
 fi
 
-[ -x "$AGENTAPI" ] || fout "Gemini agentapi niet gevonden op $AGENTAPI (is Antigravity geinstalleerd?)"
+if [[ "${GEMINI_AGENTAPI:-}" =~ [^[:space:]] ]] || [[ "${GEMINI_BRAIN_DIR:-}" =~ [^[:space:]] ]] \
+   || ! [[ "${ANTIGRAVITY_LS_ADDRESS:-}" =~ [^[:space:]] ]] \
+   || ! [[ "${ANTIGRAVITY_CSRF_TOKEN:-}" =~ [^[:space:]] ]]; then
+  [ -x "$AGENTAPI" ] || fout "Gemini agentapi niet gevonden op $AGENTAPI (is Antigravity geinstalleerd?)"
+fi
 
 if [ "$ZELFTEST" = 1 ]; then
   T="$(mktemp -d "${TMPDIR:-/tmp}/overleg-zelftest.XXXXXX")"

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -86,8 +87,10 @@ class Overleg(unittest.TestCase):
                     "STUB_GEMINI_SCRIPT": str(gemini_py), "STUB_CODEX_TELLER": str(self.teller),
                     "GEMINI_BRAIN_DIR": str(self.brain), "AI_DEBAT": str(HIER),
                     "CODEX_SH_PY": sys.executable, "CODEX_SH_RUNS": str(self.runs)}
-        self.env.pop("ANTIGRAVITY_LS_ADDRESS", None)
-        self.env.pop("GEMINI_AGENTAPI", None)
+        for naam in ("ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_CSRF_TOKEN",
+                     "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY",
+                     "GEMINI_AGENTAPI", "GEMINI_BEWAAR_SESSIE"):
+            self.env.pop(naam, None)
 
     def maak_programma(self, naam, script_variabele, script):
         if os.name == "nt":
@@ -106,6 +109,13 @@ class Overleg(unittest.TestCase):
             input="Onderzoek de afspraak.", capture_output=True, text=True,
             env=env or self.env, timeout=30,
         )
+
+    def beurten(self):
+        naam = Path(str(self.rapport) + ".ronde").read_text(encoding="utf-8").strip()
+        run_dir = self.runs / naam
+        board = [json.loads(regel) for regel in (run_dir / "board.jsonl")
+                 .read_text(encoding="utf-8").splitlines()]
+        return run_dir, board
 
     def test_ontbrekende_toegang_stopt_voor_codex_en_ronde(self):
         for adres in (None, " \t"):
@@ -233,6 +243,168 @@ class Overleg(unittest.TestCase):
             c_model, c_niveau = debat._claude_standaard(ps_tekst=ps_tekst)
             self.assertEqual((c_model, c_niveau), ("claude-opus-4-7", "max"))
 
+    def test_http_fout_schrijft_geen_serverbody_of_geheim_weg(self):
+        fake_body = "nep-sleutel-in-serverbody"
+        fout = urllib.error.HTTPError(
+            "http://localhost:53510/rpc?token=nep-sleutel-in-url", 403,
+            "nep-sleutel-in-reden", {"Authorization": "nep-sleutel-in-header"},
+            io.BytesIO(fake_body.encode()),
+        )
+        env = {"ANTIGRAVITY_LS_ADDRESS": "localhost:53510",
+               "ANTIGRAVITY_CSRF_TOKEN": "nep-sleutel-in-omgeving",
+               "CODEX_HOME": str(self.map)}
+        stderr = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(debat, "BRAIN_DIR", self.brain):
+                with mock.patch.object(overleg, "roep_codex_in_map", return_value="Codex analyse"):
+                    with mock.patch.object(debat.urllib.request, "urlopen", side_effect=fout):
+                        with redirect_stderr(stderr):
+                            code = overleg.draai_overleg(self.werkmap, self.rapport, "Test", "Opdracht", rondes=1)
+        self.assertEqual(code, 1)
+        run_dir, board = self.beurten()
+        self.assertEqual(board[-1]["soort"], "fout")
+        self.assertIn("Antigravity StartCascade HTTP 403", board[-1]["tekst"])
+        tekst = stderr.getvalue() + "\n" + "\n".join(
+            p.read_text(encoding="utf-8") for p in run_dir.rglob("*") if p.is_file()
+        )
+        for geheim in (fake_body, "nep-sleutel-in-url", "nep-sleutel-in-reden",
+                       "nep-sleutel-in-header", "nep-sleutel-in-omgeving"):
+            self.assertNotIn(geheim, tekst)
+        self.assertFalse(self.rapport.exists())
+
+    def test_onverwachte_gemini_fout_wordt_ook_gezuiverd(self):
+        env = {"GEMINI_AGENTAPI": str(self.gemini), "CODEX_HOME": str(self.map)}
+        stderr = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(overleg, "roep_codex_in_map", return_value="Codex analyse"):
+                with mock.patch.object(debat, "roep_gemini",
+                                       side_effect=RuntimeError("Authorization: nep-geheim")):
+                    with redirect_stderr(stderr):
+                        code = overleg.draai_overleg(self.werkmap, self.rapport, "Test", "Opdracht", rondes=1)
+        self.assertEqual(code, 1)
+        _, board = self.beurten()
+        self.assertIn("Gemini-aanroep mislukt", board[-1]["tekst"])
+        self.assertNotIn("nep-geheim", board[-1]["tekst"] + stderr.getvalue())
+
+    def test_onuitvoerbare_gemini_keuze_stopt_voor_eerste_beurt(self):
+        env = {**self.env, "GEMINI_AGENTAPI": str(self.gemini)}
+        for model, niveau in (("flash_lite", "high"), ("gemini-4-argon", "medium"),
+                              ("gemini-3.8-flash", "medium")):
+            with self.subTest(model=model, niveau=niveau):
+                uit = self.python("-g", model, "-G", niveau, env=env)
+                self.assertEqual(uit.returncode, 2, uit.stderr)
+                self.assertIn("denkniveau", uit.stderr)
+                self.assertFalse(self.teller.exists(), "Codex werd toch aangeroepen")
+                self.assertFalse(self.runs.exists(), "de ronde werd toch aangemaakt")
+                self.assertFalse(self.rapport.exists())
+        self.assertEqual(debat.gemini_model_info("flash_lite", "")[:2],
+                         ("gemini-3.8-flash", "low"))
+        with self.assertRaisesRegex(ValueError, "vereist denkniveau low"):
+            debat.gemini_model_info("flash_lite-high", "")
+        uit = self.python("-G", "xhigh", env=env)
+        self.assertEqual(uit.returncode, 2, uit.stderr)
+        self.assertIn("onbekend Gemini-denkniveau", uit.stderr)
+        self.assertFalse(self.runs.exists())
+
+    def test_agentapi_fouttekst_met_sleutel_wordt_niet_bewaard(self):
+        geheim = "nep-sleutel-uit-agentapi"
+        env = {"GEMINI_AGENTAPI": str(self.gemini), "GEMINI_BRAIN_DIR": str(self.brain),
+               "CODEX_HOME": str(self.map)}
+        stderr = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(overleg, "roep_codex_in_map", return_value="Codex analyse"):
+                with mock.patch.object(debat, "_draai", return_value=(1, geheim, geheim)):
+                    with redirect_stderr(stderr):
+                        code = overleg.draai_overleg(self.werkmap, self.rapport, "Test", "Opdracht", rondes=1)
+        self.assertEqual(code, 1)
+        _, board = self.beurten()
+        self.assertIn("agentapi gaf exitcode 1", board[-1]["tekst"])
+        self.assertNotIn(geheim, board[-1]["tekst"] + stderr.getvalue())
+
+    def test_rechtstreekse_opruimfout_staat_in_stderr_en_beurt(self):
+        geheim = "nep-sleutel-uit-opruimantwoord"
+        methodes = []
+
+        def rpc(adres, token, methode, payload, timeout=15.0):
+            methodes.append(methode)
+            if methode == "StartCascade":
+                return {"cascadeId": "stub-gesprek"}
+            if methode == "GetCascadeTrajectory":
+                return {"trajectory": {"steps": [{
+                    "type": "CORTEX_STEP_TYPE_PLANNER_RESPONSE",
+                    "status": "CORTEX_STEP_STATUS_DONE",
+                    "plannerResponse": {"response": "Gemini antwoord", "toolCalls": []},
+                }]}}
+            if methode == "DeleteCascadeTrajectory":
+                raise RuntimeError(geheim)
+            return {}
+
+        env = {"ANTIGRAVITY_LS_ADDRESS": "localhost:53510",
+               "ANTIGRAVITY_CSRF_TOKEN": "nep-token", "CODEX_HOME": str(self.map)}
+        stderr = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(debat, "BRAIN_DIR", self.brain):
+                with mock.patch.object(overleg, "roep_codex_in_map", return_value="Codex analyse"):
+                    with mock.patch.object(debat, "_antigravity_rpc", side_effect=rpc):
+                        with redirect_stderr(stderr):
+                            code = overleg.draai_overleg(self.werkmap, self.rapport, "Test", "Opdracht", rondes=1)
+        self.assertEqual(code, 1)
+        self.assertEqual(methodes, ["StartCascade", "SendUserCascadeMessage",
+                                   "GetCascadeTrajectory", "DeleteCascadeTrajectory"])
+        _, board = self.beurten()
+        self.assertIn("DeleteCascadeTrajectory: opruiming mislukt", board[-1]["tekst"])
+        self.assertIn("DeleteCascadeTrajectory: opruiming mislukt", stderr.getvalue())
+        self.assertNotIn(geheim, board[-1]["tekst"] + stderr.getvalue())
+
+    def test_gemini_deadline_omvat_starten_en_wachten(self):
+        klok = [100.0]
+        gesprekken = []
+
+        def rpc(adres, token, methode, payload, timeout=15.0):
+            gesprekken.append((methode, timeout))
+            if methode == "StartCascade":
+                klok[0] += 6
+                return {"cascadeId": "stub-gesprek"}
+            if methode == "SendUserCascadeMessage":
+                klok[0] += 3
+                return {}
+            klok[0] += 0.5
+            return {"trajectory": {"steps": [{
+                "type": "CORTEX_STEP_TYPE_PLANNER_RESPONSE",
+                "status": "CORTEX_STEP_STATUS_DONE",
+                "plannerResponse": {"response": "Gemini klaar", "toolCalls": []},
+            }]}}
+
+        env = {"ANTIGRAVITY_LS_ADDRESS": "localhost:53510",
+               "ANTIGRAVITY_CSRF_TOKEN": "nep-token", "GEMINI_BEWAAR_SESSIE": "1"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(debat, "BRAIN_DIR", self.brain):
+                with mock.patch.object(debat.time, "monotonic", side_effect=lambda: klok[0]):
+                    with mock.patch.object(debat, "_antigravity_rpc", side_effect=rpc):
+                        tekst = debat.roep_gemini("Systeem", "Prompt", timeout=10)
+        self.assertEqual(tekst, "Gemini klaar")
+        self.assertEqual(gesprekken, [("StartCascade", 10.0),
+                                      ("SendUserCascadeMessage", 4.0),
+                                      ("GetCascadeTrajectory", 1.0)])
+
+    def test_agentapi_wachten_krijgt_geen_nieuwe_deadline(self):
+        klok = [100.0]
+
+        def start_stub(*args, **kwargs):
+            klok[0] += 8
+            return 0, json.dumps({"response": {"newConversation": {"conversationId": "stub-gesprek"}}}), ""
+
+        env = {"GEMINI_AGENTAPI": str(self.gemini), "GEMINI_BRAIN_DIR": str(self.brain)}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(debat.time, "monotonic", side_effect=lambda: klok[0]):
+                with mock.patch.object(debat.time, "sleep", side_effect=lambda s: klok.__setitem__(0, klok[0] + s)):
+                    with mock.patch.object(debat, "_draai", side_effect=start_stub) as draai:
+                        with self.assertRaises(debat.GeminiFout) as fout:
+                            debat.roep_gemini("Systeem", "Prompt", timeout=10)
+        self.assertIn("tijdlimiet", str(fout.exception))
+        self.assertEqual(klok[0], 110.0)
+        self.assertEqual(draai.call_args.kwargs["deadline"], 110.0)
+
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "overleg.sh vereist bash")
 class OverlegSh(unittest.TestCase):
@@ -277,7 +449,28 @@ class OverlegSh(unittest.TestCase):
         self.assertIn("geheel getal groter dan 0", uit.stderr)
         self.assertFalse(self.teller.exists())
 
+    def test_shell_behoudt_claude_model_en_eist_agentapi_alleen_bij_terugval(self):
+        args_bestand = self.map / "python-args"
+        fake_python = self.map / "fake-python.sh"
+        fake_python.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$STUB_PYTHON_ARGS"\n',
+                               encoding="utf-8")
+        fake_python.chmod(0o755)
+        env = {**self.env, "ANTIGRAVITY_LS_ADDRESS": "localhost:53510",
+               "ANTIGRAVITY_CSRF_TOKEN": "nep-token", "CLAUDE_MODEL": "claude-opus-test",
+               "CODEX_SH_PY": str(fake_python), "STUB_PYTHON_ARGS": str(args_bestand)}
+        env.pop("GEMINI_AGENTAPI", None)
+        env.pop("GEMINI_BRAIN_DIR", None)
+        uit = self.shell("-C", str(self.werkmap), "-o", str(self.rapport), env=env)
+        self.assertEqual(uit.returncode, 0, uit.stderr)
+        args = args_bestand.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(args[args.index("-c") + 1], "claude-opus-test")
+        self.assertNotIn("-G", args)
+
+        env["GEMINI_AGENTAPI"] = str(self.map / "niet-bestaande-agentapi")
+        uit = self.shell("-C", str(self.werkmap), "-o", str(self.rapport), env=env)
+        self.assertEqual(uit.returncode, 2, uit.stderr)
+        self.assertIn("Gemini agentapi niet gevonden", uit.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
-

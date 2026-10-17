@@ -14,6 +14,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import debat
 import opdracht
@@ -143,12 +144,51 @@ class Omgeving(unittest.TestCase):
             env = debat.omgeving([str(Path("bin") / "claude.exe"), "-p"])
             self.assertNotIn("ANTHROPIC_API_KEY", env)
             self.assertIn("PATH", {k.upper() for k in env})
-            self.assertIsNone(debat.omgeving(["codex", "exec"]))
+            self.assertNotIn("ANTHROPIC_API_KEY", debat.omgeving(["codex", "exec"]))
         finally:
             if oud is None:
                 os.environ.pop("ANTHROPIC_API_KEY", None)
             else:
                 os.environ["ANTHROPIC_API_KEY"] = oud
+
+    def test_geheimen_alleen_naar_het_bedoelde_kindproces(self):
+        nep = {"CLAUDE_CODE_OAUTH_TOKEN": "test-claude-token",
+               "ANTIGRAVITY_LS_ADDRESS": "localhost:12345",
+               "ANTIGRAVITY_CSRF_TOKEN": "test-antigravity-token",
+               "ANTHROPIC_API_KEY": "test-api-key"}
+        with mock.patch.dict(os.environ, nep):
+            with mock.patch.object(debat.subprocess, "Popen") as popen:
+                popen.return_value.communicate.return_value = ("", "")
+                popen.return_value.returncode = 0
+                kinderen = {}
+                for soort in ("claude", "codex", "agentapi"):
+                    debat._draai([soort], "", 1, None)
+                    kinderen[soort] = popen.call_args.kwargs["env"]
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", kinderen["claude"])
+        self.assertNotIn("ANTIGRAVITY_CSRF_TOKEN", kinderen["claude"])
+        self.assertNotIn("ANTIGRAVITY_LS_ADDRESS", kinderen["claude"])
+        self.assertNotIn("ANTHROPIC_API_KEY", kinderen["claude"])
+        self.assertIn("ANTIGRAVITY_CSRF_TOKEN", kinderen["agentapi"])
+        self.assertIn("ANTIGRAVITY_LS_ADDRESS", kinderen["agentapi"])
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kinderen["agentapi"])
+        for naam in nep:
+            self.assertNotIn(naam, kinderen["codex"])
+
+    def test_subproces_deadline_telt_opstarttijd_mee(self):
+        klok = [100.0]
+        wachttijden = []
+
+        def start(*args, **kwargs):
+            klok[0] += 8
+            proc = mock.Mock()
+            proc.returncode = 0
+            proc.communicate.side_effect = lambda *a, **k: (wachttijden.append(k["timeout"]) or ("", ""))
+            return proc
+
+        with mock.patch.object(debat.time, "monotonic", side_effect=lambda: klok[0]):
+            with mock.patch.object(debat.subprocess, "Popen", side_effect=start):
+                debat._draai(["agentapi"], "", 10, None, deadline=110.0)
+        self.assertEqual(wachttijden, [2.0])
 
 
 class Briefingcontrole(unittest.TestCase):

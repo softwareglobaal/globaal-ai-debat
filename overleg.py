@@ -122,17 +122,27 @@ def draai_overleg(werkmap: Path, rapport: Path, titel: str, opdracht_tekst: str,
                   claude_model: str = "", claude_niveau: str = "",
                   met_claude: bool = False, timeout: int = 1200) -> int:
     adres, token = debat._antigravity_omgeving()
-    if not ((adres and token) or os.environ.get("ANTIGRAVITY_LS_ADDRESS", "").strip()
-            or os.environ.get("GEMINI_AGENTAPI", "").strip()):
+    eigen_api = os.environ.get("GEMINI_AGENTAPI", "").strip()
+    rechtstreeks = bool(adres and token and not eigen_api
+                       and not os.environ.get("GEMINI_BRAIN_DIR", "").strip())
+    if not ((adres and token) or eigen_api):
         print("overleg.py: Gemini-toegang ontbreekt; start dit in de Terminal van Antigravity: "
               "Terminal > New Terminal", file=sys.stderr)
+        return 2
+
+    try:
+        gem_m, gem_n, gem_enum, gemini_label, _ = debat.gemini_model_info(gemini_model, gemini_niveau)
+    except ValueError as e:
+        print(f"overleg.py: {e}", file=sys.stderr)
+        return 2
+    if not rechtstreeks and not debat.gemini_terugval_ondersteunt(gem_m, gem_n):
+        print(f"overleg.py: Gemini {gem_m} met denkniveau {gem_n} is via agentapi "
+              "niet exact uitvoerbaar", file=sys.stderr)
         return 2
 
     codex_model = codex_model or _codex_config("model") or "gpt-6-sol"
     codex_niveau = codex_niveau or _codex_config("model_reasoning_effort") or "high"
     codex_label = f"{codex_model} · {codex_niveau}" if codex_niveau else codex_model
-
-    gem_m, gem_n, gem_enum, gemini_label, _ = debat.gemini_model_info(gemini_model, gemini_niveau)
 
     std_claude_m, std_claude_n = debat._claude_standaard()
     claude_model = claude_model or std_claude_m
@@ -196,8 +206,8 @@ def draai_overleg(werkmap: Path, rapport: Path, titel: str, opdracht_tekst: str,
                 tekst = roep_codex_in_map(werkmap, volledig, codex_model, codex_niveau, timeout)
             elif kant == "gemini":
                 tekst = debat.roep_gemini(
-                    SYSTEEM_OVERLEG, prompt, gemini_model, timeout,
-                    werkmap=werkmap, niveau=gemini_niveau,
+                    SYSTEEM_OVERLEG, prompt, gem_m, timeout,
+                    werkmap=werkmap, niveau=gem_n, deadline=begin + timeout,
                 )
             else:
                 tekst = debat.roep_claude(
@@ -206,8 +216,13 @@ def draai_overleg(werkmap: Path, rapport: Path, titel: str, opdracht_tekst: str,
                 )
         except Exception as e:
             duur = round(time.monotonic() - begin, 1)
-            ronde.voeg_toe(run_dir, kant, "fout", f"{kant} stopte met een fout: {e}", model=model_label, duur=duur)
-            print(f"overleg.py: {kant} faalde ({e})", file=sys.stderr)
+            if kant == "gemini":
+                reden = str(e) if isinstance(e, debat.GeminiFout) else "Gemini-aanroep mislukt"
+            else:
+                reden = str(e)
+            ronde.voeg_toe(run_dir, kant, "fout", f"{kant} stopte met een fout: {reden}",
+                           model=model_label, duur=duur)
+            print(f"overleg.py: {kant} faalde ({reden})", file=sys.stderr)
             return 1
 
         duur = round(time.monotonic() - begin, 1)
@@ -265,7 +280,7 @@ def positieve_seconden(waarde: str) -> int:
 
 def geldige_gemini_model(waarde: str) -> str:
     try:
-        debat.gemini_model_info(waarde, "high")
+        debat.gemini_model_info(waarde, "")
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
     return waarde
@@ -289,8 +304,8 @@ def main(argv=None) -> int:
     p.add_argument("-e", dest="codex_niveau", default="", help="Codex redeneerniveau (low, medium, high, xhigh, ultra)")
     p.add_argument("-g", dest="gemini_model", default="gemini-4-argon", type=geldige_gemini_model,
                    help="Gemini-model (gemini-4-argon, gemini-3.8-flash, pro, flash, flash_lite)")
-    p.add_argument("-G", "--gemini-niveau", dest="gemini_niveau", default="high", type=geldige_gemini_niveau,
-                   help="Gemini denkniveau (high, medium, low)")
+    p.add_argument("-G", "--gemini-niveau", dest="gemini_niveau", default="", type=geldige_gemini_niveau,
+                   help="Gemini denkniveau (standaard high, bij flash_lite low)")
     p.add_argument("-c", "--claude-model", dest="claude_model", default="",
                    help="Claude-model (bijv. claude-opus-5-5, opus, sonnet)")
     p.add_argument("-E", "--claude-niveau", dest="claude_niveau", default="",
