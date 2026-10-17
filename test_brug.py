@@ -1309,6 +1309,7 @@ class BrugTests(unittest.TestCase):
             onbekend.wait(timeout=5)
 
 
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "installeer_sidecar.sh vereist bash")
 class InstallatieTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

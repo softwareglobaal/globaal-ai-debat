@@ -504,8 +504,6 @@ class Overleg(unittest.TestCase):
         self.assertEqual(draai.call_args.kwargs["deadline"], 110.0)
 
 
-@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "overleg.sh vereist bash")
-@unittest.skipUnless(os.name == "posix", "procesgroepen vereisen POSIX")
 class AntigravityRpcBeveiliging(unittest.TestCase):
     def test_ongeldige_adressen_worden_geweigerd_zonder_verzoek(self):
         for adres in ("example.com:80", "127.0.0.1:80/pad",
@@ -562,6 +560,7 @@ class AntigravityRpcBeveiliging(unittest.TestCase):
             draad.join(timeout=2)
 
 
+@unittest.skipUnless(os.name == "posix", "procesgroepen vereisen POSIX")
 class DebatProcesOpruiming(unittest.TestCase):
     def test_keyboardinterrupt_bij_registratie_stopt_kind_en_kleinkind(self):
         with tempfile.TemporaryDirectory() as tijdelijk:
@@ -658,6 +657,7 @@ class DebatProcesOpruiming(unittest.TestCase):
                     proces.wait(timeout=3)
 
 
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "overleg.sh vereist bash")
 class OverlegSh(unittest.TestCase):
     setUp = Overleg.setUp
     maak_programma = Overleg.maak_programma
